@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+client_secret_*.json
+credentials.json
+token.json
+
+# Runtime data (user uploads, local DB)
+uploads/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Coverage
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
