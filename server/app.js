@@ -5,7 +5,9 @@
 import express from 'express';
 import cors from 'cors';
 import { join, relative, sep } from 'node:path';
-import { isAllowedOrigin, securityHeaders, cacheControlFor } from '../logic/http-policy.js';
+import { isAllowedOrigin, securityHeaders, uploadSecurityHeaders, cacheControlFor } from '../logic/http-policy.js';
+import { isServablePhotoName } from '../logic/meals.js';
+import { notFound } from './guards.js';
 import { makeTokens, makeAuthenticate, verifyGoogleCredential } from './auth.js';
 import { makeUpload, isUploadError } from './uploads.js';
 import { makeGroupAccess } from './guards.js';
@@ -83,7 +85,21 @@ export function createApp({
 
   app.use(express.json({ limit: '1mb' }));
 
-  app.use('/uploads', express.static(uploadsDir, { dotfiles: 'deny', index: false }));
+  // /uploads: photo names only, under a sandbox policy, and never the app
+  // shell. A missing or denied file answers JSON 404 or 403. The static
+  // module's own error carries the file's absolute path, so it is not shown.
+  const uploadHeaders = uploadSecurityHeaders();
+  app.use('/uploads',
+    (req, res, next) => {
+      res.set(uploadHeaders);
+      return isServablePhotoName(req.path) ? next() : notFound(res);
+    },
+    express.static(uploadsDir, { dotfiles: 'deny', index: false, fallthrough: false }),
+    (err, req, res, next) => {
+      if (err.status === 404) return notFound(res);
+      if (err.status === 403) return res.status(403).json({ error: 'Forbidden' });
+      next(err);
+    });
   const setCacheControl = (res, relativePath) => {
     const value = cacheControlFor(relativePath);
     if (value) res.setHeader('Cache-Control', value);
@@ -110,6 +126,11 @@ export function createApp({
   app.use('/api/planned', authenticate, plannedRoutes({ db, groupAllowed }));
   app.use('/api/suggest', authenticate, suggestRoutes({ db, now, rng, groupAllowed }));
   app.use('/api/profile', authenticate, profileRoutes({ db }));
+
+  // No HTML for a missing file: an unknown API path (any method) is JSON 404,
+  // and a missing build asset is a bare 404, not the app shell.
+  app.use('/api', (req, res) => notFound(res));
+  app.use('/assets', (req, res) => res.status(404).end());
 
   // SPA fallback
   if (distDir) {

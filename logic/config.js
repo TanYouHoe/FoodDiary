@@ -34,11 +34,19 @@ function isIPv6(value) {
 }
 
 // An IP address, or a host name. All-digit names must be a real IPv4 address.
+// IPv6 zone IDs (fe80::1%eth0) and IPv4-mapped forms (::ffff:127.0.0.1) are refused.
 export function isValidHost(value) {
   if (typeof value !== 'string') return false;
   if (isIPv4(value) || isIPv6(value)) return true;
   return !/^[\d.]+$/.test(value) && HOST_NAME.test(value);
 }
+
+// A listen address only this machine can reach.
+const isLoopbackHost = (value) => (isIPv4(value) && value.startsWith('127.')) || value === '::1' || value.toLowerCase() === 'localhost';
+
+// The most proxy hops TRUST_PROXY may name. Cloudflare plus cloudflared is two;
+// more would let a client's own X-Forwarded-For entries count as proxies.
+export const MAX_TRUST_PROXY_HOPS = 3;
 
 // An IP address, or an address with a /prefix of the right size.
 function isIpOrCidr(value) {
@@ -51,16 +59,23 @@ function isIpOrCidr(value) {
 
 // TRUST_PROXY as set, or undefined. Which proxies may name the client's IP in
 // X-Forwarded-For: none (unset or empty), 'loopback' (a proxy on this
-// machine), a hop count, or a comma-separated list of IPs or CIDR ranges.
+// machine), a hop count from 1 to MAX_TRUST_PROXY_HOPS, or a comma-separated
+// list of IPs or CIDR ranges ('loopback' cannot be mixed into the list).
 // 'true' (trust anyone) is refused: any client could then choose its own IP
 // and escape the lockout. Returns { ok, value } with Express's trust proxy value.
+const TRUST_PROXY_PROBLEM = `TRUST_PROXY must be 'loopback', a hop count from 1 to ${MAX_TRUST_PROXY_HOPS}, `
+  + "or a comma-separated list of IPs or CIDR ranges; 'loopback' cannot be mixed with IPs.";
+
 export function parseTrustProxy(value) {
   if (value === undefined || value === '') return { ok: true, value: false };
   if (value === 'loopback') return { ok: true, value: 'loopback' };
-  if (/^\d+$/.test(value)) return { ok: true, value: Number(value) };
+  if (/^\d+$/.test(value)) {
+    const hops = Number(value);
+    return hops >= 1 && hops <= MAX_TRUST_PROXY_HOPS ? { ok: true, value: hops } : { ok: false, error: TRUST_PROXY_PROBLEM };
+  }
   const entries = value.split(',').map(entry => entry.trim());
   if (entries.every(isIpOrCidr)) return { ok: true, value: entries };
-  return { ok: false, error: "TRUST_PROXY must be 'loopback', a hop count, or a comma-separated list of IPs or CIDR ranges." };
+  return { ok: false, error: TRUST_PROXY_PROBLEM };
 }
 
 // HOST and PORT as set, or undefined; checked by checkServerConfig first.
@@ -97,10 +112,18 @@ export function shouldRequireTotp({ requireTotp, nodeEnv }) {
 // Returns a list of problems; an empty list means the server may start.
 export function checkServerConfig({ nodeEnv, jwtSecret, defaultTimeZone, publicOrigin, requireTotp, host, port, trustProxy }) {
   const problems = [];
-  if (host !== undefined && !isValidHost(host)) problems.push(`HOST must be an IP address or a host name, such as ${DEFAULT_HOST}.`);
+  if (host !== undefined && !isValidHost(host)) {
+    problems.push(`HOST must be an IP address or a host name, such as ${DEFAULT_HOST}; IPv6 zone IDs and IPv4-mapped forms are not accepted.`);
+  }
   if (port !== undefined && !isValidPort(port)) problems.push('PORT must be a whole number from 1 to 65535.');
   const trust = parseTrustProxy(trustProxy);
   if (!trust.ok) problems.push(trust.error);
+  // A production server on a loopback address is reached only through a proxy
+  // on this machine. Without TRUST_PROXY every client would share the proxy's
+  // IP, and one guesser would lock everyone out.
+  if (nodeEnv === 'production' && trust.ok && trust.value === false && isLoopbackHost(listenHost(host))) {
+    problems.push('TRUST_PROXY is required behind a local proxy in production');
+  }
   if (requireTotp !== undefined && requireTotp !== '1' && requireTotp !== '0') {
     problems.push("REQUIRE_TOTP must be '1' or '0'.");
   }

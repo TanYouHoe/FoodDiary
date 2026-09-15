@@ -1,6 +1,7 @@
 // Integration test: public hardening over real HTTP — CORS, security and cache
-// headers, safe upload names and signatures, the JSON body limit, and trust
-// proxy. Its own apps, in-memory databases and a temp directory.
+// headers, safe upload names and signatures, what /uploads, /api and /assets
+// answer for a missing file, the JSON body limit, and trust proxy. Its own
+// apps, in-memory databases and temp directories.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
@@ -16,6 +17,7 @@ const EVIL = 'https://evil.example.test';
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAMAASsJTYQAAAAASUVORK5CYII=', 'base64');
 const HTML = Buffer.from('<!doctype html><script>alert(document.cookie)</script>');
 const NOT_IMAGE = { status: 400, body: { error: 'Not a supported image' } };
+const UPLOAD_CSP = "default-src 'none'; img-src 'self'; sandbox";
 
 async function listen(app) {
   const server = await new Promise(resolve => { const s = app.listen(0, () => resolve(s)); });
@@ -24,7 +26,8 @@ async function listen(app) {
 
 describe('API hardening', () => {
   let root;
-  let uploadsDir;
+  let uploadsDir;      // publicApp's uploads
+  let plainUploadsDir; // plainApp's uploads
   let distDir;
   let publicApp; // PUBLIC_ORIGIN https, trust proxy loopback
   let plainApp;  // no PUBLIC_ORIGIN, no trust proxy
@@ -34,6 +37,7 @@ describe('API hardening', () => {
 
   const files = () => readdirSync(uploadsDir);
   const get = (path, headers = {}, at = publicApp) => fetch(`${at.origin}${path}`, { headers });
+  const json = async (res) => ({ status: res.status, type: res.headers.get('content-type') ?? '', body: await res.json().catch(() => null) });
 
   const uploadPhotos = async (path, field, parts) => {
     const form = new FormData();
@@ -50,8 +54,10 @@ describe('API hardening', () => {
   before(async () => {
     root = mkdtempSync(join(tmpdir(), 'fooddiary-harden-'));
     uploadsDir = join(root, 'uploads');
+    plainUploadsDir = join(root, 'plain-uploads');
     distDir = join(root, 'dist');
     mkdirSync(uploadsDir);
+    mkdirSync(plainUploadsDir);
     mkdirSync(join(distDir, 'assets'), { recursive: true });
     writeFileSync(join(distDir, 'index.html'), '<!doctype html><div id="root"></div><script type="module" src="/assets/x.js"></script>');
     writeFileSync(join(distDir, 'assets', 'x.js'), 'export {};');
@@ -65,7 +71,7 @@ describe('API hardening', () => {
     publicApp = { ...(await listen(built.app)), db };
 
     const plainDb = openDatabase(':memory:', { defaultTimeZone: KL });
-    const plain = createApp({ db: plainDb, uploadsDir, distDir, jwtSecret: 'test-secret', defaultTimeZone: KL, requireTotp: false });
+    const plain = createApp({ db: plainDb, uploadsDir: plainUploadsDir, distDir, jwtSecret: 'test-secret', defaultTimeZone: KL, requireTotp: false });
     plainApp = { ...(await listen(plain.app)), db: plainDb };
 
     const reg = await postJson('/auth/register', { name: 'Hana', email: 'hana@harden.test', password: 'pw', invite_code: inviteCode(db, { role: 'owner' }) });
@@ -132,20 +138,28 @@ describe('API hardening', () => {
   });
 
   describe('security headers', () => {
-    const assertSecure = (res, what) => {
-      assert.match(res.headers.get('content-security-policy') ?? '', /default-src 'self'.*frame-ancestors 'none'/, what);
+    const assertSecure = (res, what, csp = /default-src 'self'.*frame-ancestors 'none'/) => {
+      assert.match(res.headers.get('content-security-policy') ?? '', csp, what);
       assert.equal(res.headers.get('x-content-type-options'), 'nosniff', what);
       assert.equal(res.headers.get('referrer-policy'), 'strict-origin-when-cross-origin', what);
       assert.equal(res.headers.get('permissions-policy'), 'geolocation=(self), camera=(), microphone=()', what);
       assert.equal(res.headers.get('cross-origin-opener-policy'), 'same-origin-allow-popups', what);
     };
 
-    it('are on API, static, SPA, error and upload responses', async () => {
-      writeFileSync(join(uploadsDir, 'shown.png'), PNG);
-      for (const path of ['/api/health', '/api/meals', '/', '/index.html', '/assets/x.js', '/invite/abc', '/uploads/shown.png']) {
+    it('are on API, static, SPA and error responses', async () => {
+      for (const path of ['/api/health', '/api/meals', '/api/nope', '/', '/index.html', '/assets/x.js', '/assets/missing.js', '/invite/abc']) {
         const res = await get(path);
         assertSecure(res, path);
         assert.equal(res.headers.get('strict-transport-security'), 'max-age=15552000', path);
+      }
+    });
+
+    it('/uploads answers carry the sandbox policy instead of the app policy', async () => {
+      writeFileSync(join(uploadsDir, 'shown.png'), PNG);
+      for (const path of ['/uploads/shown.png', '/uploads/missing.png', '/uploads/x.html']) {
+        const res = await get(path);
+        assert.equal(res.headers.get('content-security-policy'), UPLOAD_CSP, path);
+        assert.equal(res.headers.get('x-content-type-options'), 'nosniff', path);
       }
     });
 
@@ -177,6 +191,24 @@ describe('API hardening', () => {
     });
   });
 
+  describe('no HTML for a missing file', () => {
+    it('an unknown API path answers JSON 404 for any method', async () => {
+      for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+        const r = await json(await fetch(`${publicApp.origin}/api/nope/deeper`, { method }));
+        assert.equal(r.status, 404, method);
+        assert.match(r.type, /application\/json/, method);
+        assert.deepEqual(r.body, { error: 'Not found' }, method);
+      }
+    });
+
+    it('a missing build asset answers 404 with no body, not the app shell', async () => {
+      const res = await get('/assets/missing.js');
+      assert.equal(res.status, 404);
+      assert.doesNotMatch(res.headers.get('content-type') ?? '', /html/);
+      assert.equal(await res.text(), '');
+    });
+  });
+
   describe('uploads', () => {
     it('a stored name is 32 random hex chars and a MIME extension, never the client name', async () => {
       const before = new Set(files());
@@ -191,6 +223,7 @@ describe('API hardening', () => {
       assert.equal(served.status, 200);
       assert.equal(served.headers.get('content-type'), 'image/png');
       assert.equal(served.headers.get('x-content-type-options'), 'nosniff');
+      assert.equal(served.headers.get('content-security-policy'), UPLOAD_CSP);
     });
 
     it('a JPEG gets .jpg', async () => {
@@ -214,28 +247,46 @@ describe('API hardening', () => {
 
     it('one spoofed file among meal photos refuses them all and deletes every file', async () => {
       const before = files().length;
-      const stored = (await get(`/api/meals`, { Authorization: `Bearer ${token}` }).then(r => r.json())).find(m => m.id === mealId).photo_urls;
+      const photosOf = async () => (await get('/api/meals', { Authorization: `Bearer ${token}` }).then(r => r.json())).find(m => m.id === mealId).photo_urls;
+      const stored = await photosOf();
       const r = await uploadPhotos(`/meals/${mealId}/photos`, 'photos', [
         { bytes: PNG, type: 'image/png', name: 'good.png' },
         { bytes: HTML, type: 'image/png', name: 'bad.png' },
       ]);
       assert.deepEqual(r, NOT_IMAGE);
       assert.equal(files().length, before);
-      const after = (await get(`/api/meals`, { Authorization: `Bearer ${token}` }).then(r => r.json())).find(m => m.id === mealId).photo_urls;
-      assert.deepEqual(after, stored, 'the meal keeps its photos');
+      assert.deepEqual(await photosOf(), stored, 'the meal keeps its photos');
     });
 
-    it('old stored names keep working; dot files and directories are not served', async () => {
+    it('old stored names keep working', async () => {
       writeFileSync(join(uploadsDir, '1700000000000-p0.png'), PNG);
       assert.equal((await get('/uploads/1700000000000-p0.png')).status, 200);
+    });
 
-      // A denied dot file falls through to the SPA fallback; its content is never sent.
+    it('a missing photo answers JSON 404, never the app shell', async () => {
+      const r = await json(await get('/uploads/missing.png'));
+      assert.equal(r.status, 404);
+      assert.match(r.type, /application\/json/);
+    });
+
+    it('only photo names are served: HTML, scripts, dot files and directories answer 404', async () => {
+      writeFileSync(join(uploadsDir, 'x.html'), HTML);
+      writeFileSync(join(uploadsDir, 'x.js'), 'alert(1)');
       writeFileSync(join(uploadsDir, '.secret'), 'top-secret-value');
-      assert.doesNotMatch(await (await get('/uploads/.secret')).text(), /top-secret-value/);
-
       mkdirSync(join(uploadsDir, 'sub'), { recursive: true });
       writeFileSync(join(uploadsDir, 'sub', 'index.html'), 'listing');
-      assert.doesNotMatch(await (await get('/uploads/sub/')).text(), /listing/);
+      for (const path of ['/uploads/x.html', '/uploads/x.js', '/uploads/.secret', '/uploads/sub/', '/uploads/sub']) {
+        const r = await json(await get(path));
+        assert.equal(r.status, 404, path);
+        assert.match(r.type, /application\/json/, path);
+      }
+    });
+
+    it('a dot file with a photo name answers JSON 403', async () => {
+      writeFileSync(join(uploadsDir, '.hidden.png'), PNG);
+      const r = await json(await get('/uploads/.hidden.png'));
+      assert.equal(r.status, 403);
+      assert.match(r.type, /application\/json/);
     });
   });
 
@@ -248,7 +299,7 @@ describe('API hardening', () => {
 
     it('a body under 1 MB is parsed', async () => {
       const r = await postJson('/nothing', { blob: 'x'.repeat(512 * 1024) });
-      assert.notEqual(r.status, 413);
+      assert.equal(r.status, 404);
     });
   });
 
@@ -257,11 +308,18 @@ describe('API hardening', () => {
     const check = (at, forwardedFor) => postJson('/invites/check', { code: 'wrong' }, { 'X-Forwarded-For': forwardedFor }, at);
 
     it('behind a loopback proxy each forwarded client IP gets its own lockout key', async () => {
-      assert.equal((await check(publicApp, '203.0.113.7')).status, 200);
-      assert.equal((await check(publicApp, '203.0.113.8')).status, 200);
+      assert.equal((await check(publicApp, '203.0.113.17')).status, 200);
+      assert.equal((await check(publicApp, '203.0.113.18')).status, 200);
+      const keys = ipKeys(publicApp.db);
+      assert.ok(keys.includes('ip:203.0.113.17'), keys.join());
+      assert.ok(keys.includes('ip:203.0.113.18'), keys.join());
+    });
+
+    it('a client-supplied X-Forwarded-For entry is not trusted: the address the proxy saw is the key', async () => {
+      assert.equal((await check(publicApp, '198.51.100.1, 203.0.113.7')).status, 200);
       const keys = ipKeys(publicApp.db);
       assert.ok(keys.includes('ip:203.0.113.7'), keys.join());
-      assert.ok(keys.includes('ip:203.0.113.8'), keys.join());
+      assert.equal(keys.includes('ip:198.51.100.1'), false, keys.join());
     });
 
     it('with trust proxy off, X-Forwarded-For is ignored', async () => {

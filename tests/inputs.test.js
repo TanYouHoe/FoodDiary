@@ -190,17 +190,17 @@ describe('checkServerConfig', () => {
     assert.deepEqual(checkServerConfig({ nodeEnv: 'development', jwtSecret: DEV_JWT_SECRET }), []);
   });
   it('in production, needs a long secret that is not the development default', () => {
-    const prod = { nodeEnv: 'production', publicOrigin: PROD_ORIGIN };
+    const prod = { nodeEnv: 'production', publicOrigin: PROD_ORIGIN, trustProxy: 'loopback' };
     assert.equal(checkServerConfig({ ...prod, jwtSecret: undefined }).length, 1);
     assert.equal(checkServerConfig({ ...prod, jwtSecret: '' }).length, 1);
     assert.equal(checkServerConfig({ ...prod, jwtSecret: DEV_JWT_SECRET }).length, 1);
     assert.equal(checkServerConfig({ ...prod, jwtSecret: 'x'.repeat(MIN_JWT_SECRET_LENGTH - 1) }).length, 1);
-    assert.deepEqual(checkServerConfig({ nodeEnv: 'production', jwtSecret: 'x'.repeat(MIN_JWT_SECRET_LENGTH), publicOrigin: PROD_ORIGIN }), []);
+    assert.deepEqual(checkServerConfig({ ...prod, jwtSecret: 'x'.repeat(MIN_JWT_SECRET_LENGTH) }), []);
     assert.equal(MIN_JWT_SECRET_LENGTH, 32);
   });
   it('in production, needs an https PUBLIC_ORIGIN', () => {
     const secret = 'x'.repeat(MIN_JWT_SECRET_LENGTH);
-    const problems = (publicOrigin) => checkServerConfig({ nodeEnv: 'production', jwtSecret: secret, publicOrigin });
+    const problems = (publicOrigin) => checkServerConfig({ nodeEnv: 'production', jwtSecret: secret, publicOrigin, trustProxy: 'loopback' });
     assert.deepEqual(problems(undefined), ['PUBLIC_ORIGIN must be set in production.']);
     assert.deepEqual(problems(''), ['PUBLIC_ORIGIN must be set in production.']);
     const HTTPS = ['PUBLIC_ORIGIN must be an https origin in production, such as https://food.example.com.'];
@@ -226,7 +226,7 @@ describe('checkServerConfig', () => {
   it('the development default is the documented one', () => assert.equal(DEV_JWT_SECRET, 'food-diary-dev-secret'));
   it('refuses a default time zone Intl does not know, in every environment', () => {
     for (const nodeEnv of [undefined, 'development', 'production']) {
-      const base = { nodeEnv, jwtSecret: 'x'.repeat(MIN_JWT_SECRET_LENGTH), publicOrigin: PROD_ORIGIN };
+      const base = { nodeEnv, jwtSecret: 'x'.repeat(MIN_JWT_SECRET_LENGTH), publicOrigin: PROD_ORIGIN, trustProxy: 'loopback' };
       assert.deepEqual(checkServerConfig({ ...base, defaultTimeZone: undefined }), [], nodeEnv);
       assert.deepEqual(checkServerConfig({ ...base, defaultTimeZone: 'UTC' }), [], nodeEnv);
       assert.deepEqual(checkServerConfig({ ...base, defaultTimeZone: 'Mars/Olympus' }),

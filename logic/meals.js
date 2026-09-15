@@ -16,6 +16,13 @@ const STORED_NAME_HEX = /^[0-9a-f]{32}$/;
 
 export const photoExtension = (mimeType) => (isAcceptedPhotoType(mimeType) ? PHOTO_EXTENSIONS[mimeType] : null);
 
+// /uploads serves only photo names: today's extensions, plus '.jpeg' from
+// older stored names that kept the client's file name.
+const SERVED_PHOTO_EXTENSIONS = [...Object.values(PHOTO_EXTENSIONS), '.jpeg'];
+
+export const isServablePhotoName = (name) =>
+  typeof name === 'string' && SERVED_PHOTO_EXTENSIONS.some(extension => name.toLowerCase().endsWith(extension));
+
 // hex: 32 random hex characters from the caller.
 export function storedPhotoName(hex, mimeType) {
   const extension = photoExtension(mimeType);

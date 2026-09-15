@@ -1,7 +1,7 @@
 // Logic test: photo file types from their first bytes, and stored photo names.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { photoTypeFromBytes, photoExtension, storedPhotoName, PHOTO_SIGNATURE_BYTES } from '../logic/meals.js';
+import { photoTypeFromBytes, photoExtension, storedPhotoName, isServablePhotoName, PHOTO_SIGNATURE_BYTES } from '../logic/meals.js';
 
 const bytes = (...values) => Uint8Array.from(values);
 const ascii = (text) => Uint8Array.from(Buffer.from(text, 'latin1'));
@@ -22,8 +22,22 @@ describe('photoTypeFromBytes', () => {
     assert.equal(photoTypeFromBytes(ascii('GIF89a......')), null);
   });
 
-  it('needs no more than PHOTO_SIGNATURE_BYTES bytes', () => {
-    assert.equal(PHOTO_SIGNATURE_BYTES, 12);
+  it('a 12-byte WebP header is detected, an 11-byte one is not', () => {
+    const header = ascii('RIFF\x24\x00\x00\x00WEBP');
+    assert.equal(header.length, PHOTO_SIGNATURE_BYTES);
+    assert.equal(photoTypeFromBytes(header), 'image/webp');
+    assert.equal(photoTypeFromBytes(header.subarray(0, 11)), null);
+  });
+});
+
+describe('isServablePhotoName', () => {
+  it('serves only photo file names', () => {
+    for (const name of ['0123456789abcdef0123456789abcdef.png', 'a.jpg', 'a.JPEG', 'a.webp', '1700000000000-p0.png', '/a.PNG']) {
+      assert.equal(isServablePhotoName(name), true, name);
+    }
+    for (const name of ['x.html', 'x.js', 'x.svg', 'x.gif', '.secret', 'png', 'x.png.html', 'sub/', '']) {
+      assert.equal(isServablePhotoName(name), false, name);
+    }
   });
 });
 

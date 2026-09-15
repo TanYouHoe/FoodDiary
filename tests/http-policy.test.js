@@ -1,7 +1,7 @@
 // Logic test: what the server tells browsers — CORS origins, security headers, cache rules.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { allowedOrigins, isAllowedOrigin, securityHeaders, cacheControlFor, VITE_DEV_ORIGIN, NO_CACHE, IMMUTABLE } from '../logic/http-policy.js';
+import { allowedOrigins, isAllowedOrigin, securityHeaders, uploadSecurityHeaders, cacheControlFor, VITE_DEV_ORIGIN, NO_CACHE, IMMUTABLE } from '../logic/http-policy.js';
 
 const PUBLIC = 'https://food.example.test';
 
@@ -43,11 +43,15 @@ describe('securityHeaders', () => {
     const csp = directives(securityHeaders({ publicOrigin: PUBLIC })['Content-Security-Policy']);
     assert.deepEqual(csp['default-src'], ["'self'"]);
     assert.deepEqual(csp['script-src'], ["'self'", 'https://accounts.google.com/gsi/client', 'https://maps.googleapis.com', 'https://maps.gstatic.com']);
-    assert.deepEqual(csp['connect-src'], ["'self'", 'https://accounts.google.com', 'https://maps.googleapis.com']);
-    assert.deepEqual(csp['frame-src'], ['https://accounts.google.com']);
-    assert.deepEqual(csp['img-src'], ["'self'", 'data:', 'blob:', 'https://*.googleusercontent.com', 'https://maps.gstatic.com', 'https://maps.googleapis.com']);
-    assert.deepEqual(csp['style-src'], ["'self'", "'unsafe-inline'", 'https://accounts.google.com/gsi/style']);
-    assert.deepEqual(csp['font-src'], ["'self'", 'data:']);
+    assert.deepEqual(csp['connect-src'], ["'self'", 'https://accounts.google.com/gsi/', 'https://*.googleapis.com']);
+    assert.deepEqual(csp['frame-src'], ['https://accounts.google.com/gsi/']);
+    assert.deepEqual(csp['img-src'], ["'self'", 'data:', 'blob:', 'https://*.googleusercontent.com', 'https://*.googleapis.com',
+      'https://*.gstatic.com', 'https://*.ggpht.com', 'https://*.google.com']);
+    assert.deepEqual(csp['style-src'], ["'self'", "'unsafe-inline'", 'https://accounts.google.com/gsi/style', 'https://fonts.googleapis.com']);
+    assert.deepEqual(csp['font-src'], ["'self'", 'data:', 'https://fonts.gstatic.com']);
+    assert.equal(csp['worker-src'], undefined);
+    assert.deepEqual(Object.keys(csp).sort(), ['base-uri', 'connect-src', 'default-src', 'font-src', 'form-action', 'frame-ancestors',
+      'frame-src', 'img-src', 'object-src', 'script-src', 'style-src']);
     assert.deepEqual(csp['object-src'], ["'none'"]);
     assert.deepEqual(csp['base-uri'], ["'self'"]);
     assert.deepEqual(csp['form-action'], ["'self'"]);
@@ -75,6 +79,12 @@ describe('securityHeaders', () => {
     assert.equal('Strict-Transport-Security' in securityHeaders({ publicOrigin: 'http://192.168.1.36:3004' }), false);
     assert.equal('Strict-Transport-Security' in securityHeaders({ publicOrigin: null }), false);
     assert.equal('Strict-Transport-Security' in securityHeaders({}), false);
+  });
+});
+
+describe('uploadSecurityHeaders', () => {
+  it('a stored photo may be only an image: no scripts, no styles, sandboxed', () => {
+    assert.deepEqual(uploadSecurityHeaders(), { 'Content-Security-Policy': "default-src 'none'; img-src 'self'; sandbox" });
   });
 });
 

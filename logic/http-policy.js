@@ -9,6 +9,8 @@ export const VITE_DEV_ORIGIN = 'http://localhost:5176';
 // nodeEnv: NODE_ENV. Returns the origins whose pages may call the API.
 export function allowedOrigins({ publicOrigin, nodeEnv }) {
   const origins = publicOrigin ? [publicOrigin.replace(/\/+$/, '')] : [];
+  // Vite proxies /api and /uploads, so calls from the dev page are same-origin.
+  // This entry is kept for direct calls from the dev page to the API port.
   if (nodeEnv !== 'production') origins.push(VITE_DEV_ORIGIN);
   return origins;
 }
@@ -17,9 +19,9 @@ export function allowedOrigins({ publicOrigin, nodeEnv }) {
 // allowed. A request with no Origin needs no CORS headers.
 export const isAllowedOrigin = (origin, allowed) => typeof origin === 'string' && allowed.includes(origin);
 
+const GOOGLE_IDENTITY = 'https://accounts.google.com/gsi/'; // a trailing slash matches every path below it
 const GOOGLE_IDENTITY_SCRIPT = 'https://accounts.google.com/gsi/client';
 const GOOGLE_IDENTITY_STYLE = 'https://accounts.google.com/gsi/style';
-const GOOGLE_ACCOUNTS = 'https://accounts.google.com';
 const MAPS_API = 'https://maps.googleapis.com';
 const MAPS_STATIC = 'https://maps.gstatic.com';
 
@@ -30,12 +32,14 @@ const CONTENT_SECURITY_POLICY = {
   'script-src': ["'self'", GOOGLE_IDENTITY_SCRIPT, MAPS_API, MAPS_STATIC],
   // 'unsafe-inline' for styles only: React renders style="" attributes, and
   // Google Identity Services and Maps inject inline styles. Styles cannot run
-  // code, so scripts stay locked down.
-  'style-src': ["'self'", "'unsafe-inline'", GOOGLE_IDENTITY_STYLE],
-  'img-src': ["'self'", 'data:', 'blob:', 'https://*.googleusercontent.com', MAPS_STATIC, MAPS_API],
-  'font-src': ["'self'", 'data:'],
-  'connect-src': ["'self'", GOOGLE_ACCOUNTS, MAPS_API],
-  'frame-src': [GOOGLE_ACCOUNTS],
+  // code, so scripts stay locked down. Maps loads its Roboto stylesheet.
+  'style-src': ["'self'", "'unsafe-inline'", GOOGLE_IDENTITY_STYLE, 'https://fonts.googleapis.com'],
+  // Google avatars, and map tiles, markers and imagery on Google's image hosts.
+  'img-src': ["'self'", 'data:', 'blob:', 'https://*.googleusercontent.com', 'https://*.googleapis.com',
+    'https://*.gstatic.com', 'https://*.ggpht.com', 'https://*.google.com'],
+  'font-src': ["'self'", 'data:', 'https://fonts.gstatic.com'],
+  'connect-src': ["'self'", GOOGLE_IDENTITY, 'https://*.googleapis.com'],
+  'frame-src': [GOOGLE_IDENTITY],
   'object-src': ["'none'"],
   'base-uri': ["'self'"],
   'form-action': ["'self'"],
@@ -58,6 +62,11 @@ export function securityHeaders({ publicOrigin } = {}) {
   if (typeof publicOrigin === 'string' && publicOrigin.startsWith('https://')) headers['Strict-Transport-Security'] = HSTS;
   return headers;
 }
+
+// For /uploads, in place of the app policy: a stored photo is shown only as an
+// image. Even a file that slipped past the checks can run no script, load
+// nothing and reach no origin.
+export const uploadSecurityHeaders = () => ({ 'Content-Security-Policy': "default-src 'none'; img-src 'self'; sandbox" });
 
 export const NO_CACHE = 'no-cache';
 export const IMMUTABLE = 'public, max-age=31536000, immutable';
