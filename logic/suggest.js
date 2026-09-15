@@ -8,7 +8,9 @@
 // The clock arrives as `today` (YYYY-MM-DD) and `now` (ms or Date); the random
 // source arrives as `rng`; the user's IANA time zone arrives as `timeZone`.
 
-import { getMealPeriod, getDayOfWeek, getCalendarDate } from './meal-period.js';
+import {
+  getMealPeriod, getDayOfWeek, getCalendarDate, shiftCalendarDate, startOfDayInstant,
+} from './meal-period.js';
 
 export const WEIGHTS = {
   recency: 0.35,
@@ -141,20 +143,16 @@ export function effectivePriceRange(priceRange, profile) {
   return priceRange || (profile ? Math.round(profile.avg_price_range) : null);
 }
 
-function daysBefore(today, days) {
-  const d = new Date(today);
-  d.setDate(d.getDate() - days);
-  return d;
-}
-
-// Visits on or after this ISO timestamp count as "just eaten".
-export function familiarCutoff(today) {
-  return daysBefore(today, FAMILIAR_COOLDOWN_DAYS).toISOString();
+// Visits on or after this ISO timestamp count as "just eaten". The cooldown
+// counts whole calendar days, not a rolling 48 hours: it starts at local
+// midnight FAMILIAR_COOLDOWN_DAYS before `today` (YYYY-MM-DD) in the user's zone.
+export function familiarCutoff(today, timeZone) {
+  return startOfDayInstant(shiftCalendarDate(today, -FAMILIAR_COOLDOWN_DAYS), timeZone);
 }
 
 // A last visit before this date (YYYY-MM-DD) counts as "not lately".
 export function staleCutoff(today) {
-  return daysBefore(today, STALE_AFTER_DAYS).toISOString().slice(0, 10);
+  return shiftCalendarDate(today, -STALE_AFTER_DAYS);
 }
 
 // Drops restaurants eaten at in the same meal period within the cooldown.

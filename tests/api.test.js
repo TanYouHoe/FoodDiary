@@ -697,7 +697,10 @@ describe('API time zones', () => {
     const { openDatabase } = await import('../server/db.js');
     const { createApp } = await import('../server/app.js');
     db = openDatabase(':memory:');
-    const { app } = createApp({ db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur' });
+    const { app } = createApp({
+      db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur',
+      now: () => new Date(SAT_EVENING_UTC), rng: () => 0.99,
+    });
     await new Promise(resolve => { app3 = app.listen(0, resolve); });
     at = `http://127.0.0.1:${app3.address().port}/api`;
     const reg = await call('POST', '/auth/register', { at, body: { name: 'Zoe', email: 'zoe@tz.test', password: 'pw' } });
@@ -734,5 +737,29 @@ describe('API time zones', () => {
     const r = await call('POST', '/meals', { at, token: user.token, body: { restaurant_id: place.id, rating: 4, visited_at: '2026-03-29T04:30:00.000Z' } });
     assert.equal(r.status, 201);
     assert.deepEqual((await slots()).sort(), ['0|breakfast', '6|dinner']);
+  });
+
+  it('suggestions read the day and period of now in the request zone', async () => {
+    // The app's now is Saturday 20:30 UTC = Sunday 04:30 (breakfast) in KL.
+    // Yuki's one meal, Sunday 02:00 UTC = Sunday 10:00 KL, is in the KL slot
+    // of now (Sunday breakfast) and not in the UTC slot (Saturday dinner).
+    const reg = await call('POST', '/auth/register', { at, body: { name: 'Yuki', email: 'yuki@tz.test', password: 'pw' } });
+    const yuki = reg.body.token;
+    const cafe = (await call('POST', '/restaurants', { at, token: yuki, body: { name: 'Morning Cafe' } })).body;
+    await call('POST', '/meals', { at, token: yuki, body: { restaurant_id: cafe.id, rating: 5, visited_at: '2026-03-22T02:00:00.000Z' } });
+
+    const suggest = async (path, zone) => {
+      const r = await call('GET', path, { at, token: yuki, headers: { 'X-Time-Zone': zone } });
+      assert.equal(r.status, 200);
+      return r.body;
+    };
+    const familiar = (list) => list.filter(s => s.suggestion_type === 'familiar').map(s => s.name);
+    assert.deepEqual(familiar(await suggest('/suggest?type=meal', 'Asia/Kuala_Lumpur')), ['Morning Cafe']);
+    assert.deepEqual(familiar(await suggest('/suggest?type=meal', 'UTC')), []);
+
+    // The scorer counts whole days from today: 2026-03-29 in KL, 2026-03-28 in UTC.
+    const recency = (list) => list.find(s => s.id === cafe.id).scores.recency;
+    assert.equal(recency(await suggest('/suggest', 'Asia/Kuala_Lumpur')), 6 / 30);
+    assert.equal(recency(await suggest('/suggest', 'UTC')), 5 / 30);
   });
 });

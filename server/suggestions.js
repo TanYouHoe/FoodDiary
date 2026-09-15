@@ -24,7 +24,7 @@ function restaurantFilter(cuisine, priceRange) {
 }
 
 // Restaurant scorer: top restaurants with scores and an explanation.
-export function getSuggestions(db, { userId, groupId, cuisine, priceRange, now }) {
+export function getSuggestions(db, { userId, groupId, cuisine, priceRange, now, timeZone }) {
   const f = restaurantFilter(cuisine, priceRange);
   const restaurants = db.prepare(`SELECT * FROM restaurants r WHERE 1=1${f.clause}`).all(...f.params).map(toRestaurant);
   if (restaurants.length === 0) return [];
@@ -80,7 +80,7 @@ export function getSuggestions(db, { userId, groupId, cuisine, priceRange, now }
   return rankRestaurants(candidates, {
     recentCuisines,
     maxVisitCount: maxRow?.max_count || 0,
-    today: now.toISOString().slice(0, 10),
+    today: mealContext(now, timeZone).today,
     now: now.getTime(),
   });
 }
@@ -89,7 +89,7 @@ export function getSuggestions(db, { userId, groupId, cuisine, priceRange, now }
 export function suggestMeal(db, { userId, groupId, cuisine, priceRange, now, rng, timeZone }) {
   const { dayOfWeek, mealPeriod, today } = mealContext(now, timeZone);
   const profile = findProfile(db, userId, dayOfWeek, mealPeriod);
-  const scorerPicks = () => getSuggestions(db, { userId, groupId, cuisine, priceRange, now });
+  const scorerPicks = () => getSuggestions(db, { userId, groupId, cuisine, priceRange, now, timeZone });
 
   if (profileConfidence(profile) === 0) return tagAsNew(scorerPicks());
 
@@ -113,7 +113,7 @@ function familiarPool(db, { userId, cuisine, price, mealPeriod, today, timeZone 
     GROUP BY r.id ORDER BY visit_count DESC, avg_rating DESC
   `).all(userId, ...f.params).map(row => ({ ...toRestaurant(row), visit_count: row.visit_count, avg_rating: row.avg_rating }));
 
-  const cutoff = familiarCutoff(today);
+  const cutoff = familiarCutoff(today, timeZone);
   const recent = db.prepare('SELECT m.visited_at FROM meals m WHERE m.user_id = ? AND m.restaurant_id = ? AND m.visited_at >= ?');
   const recentVisits = new Map(candidates.map(r => [r.id, recent.all(userId, r.id, cutoff).map(row => row.visited_at)]));
 

@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {
   scoreRestaurant, generateExplanation, rollSlotTypes, assembleMealSuggestions, topUpSuggestions,
   excludeRecentlyEaten, mergeByPriority, effectivePriceRange, profileConfidence, tagAsNew, rankRestaurants,
-  mealContext,
+  mealContext, familiarCutoff, staleCutoff,
 } from '../logic/suggest.js';
 import { openDatabase } from '../server/db.js';
-import { suggestMeal } from '../server/suggestions.js';
+import { suggestMeal, getSuggestions } from '../server/suggestions.js';
 
 // A fixed sequence of "random" numbers, repeated.
 const sequence = (...values) => { let i = 0; return () => values[i++ % values.length]; };
@@ -124,6 +124,22 @@ describe('meal suggester rules', () => {
     assert.deepEqual(excludeRecentlyEaten([r(1), r(2)], visits, 'lunch', 'UTC').map(x => x.id), [1, 2]);
   });
 
+  it('the familiar cooldown starts at local midnight two days before today, in the given zone', () => {
+    assert.equal(familiarCutoff('2026-03-29', 'Asia/Kuala_Lumpur'), '2026-03-26T16:00:00.000Z');
+    assert.equal(familiarCutoff('2026-03-29', 'UTC'), '2026-03-27T00:00:00.000Z');
+    assert.equal(familiarCutoff('2026-03-29', 'America/New_York'), '2026-03-27T04:00:00.000Z');
+    // Across the start of US daylight saving time (2026-03-08).
+    assert.equal(familiarCutoff('2026-03-10', 'America/New_York'), '2026-03-08T05:00:00.000Z');
+    assert.equal(familiarCutoff('2026-03-11', 'America/New_York'), '2026-03-09T04:00:00.000Z');
+    assert.throws(() => familiarCutoff('2026-03-29'), RangeError);
+  });
+
+  it('a stale visit is one before the calendar date thirty days before today', () => {
+    assert.equal(staleCutoff('2026-03-29'), '2026-02-27');
+    assert.equal(staleCutoff('2024-03-01'), '2024-01-31');
+    assert.equal(staleCutoff('2026-01-15'), '2025-12-16');
+  });
+
   it('reads the meal context in the given zone', () => {
     // Saturday 20:30 UTC is Sunday 04:30 in Kuala Lumpur.
     const now = new Date('2026-03-28T20:30:00Z');
@@ -205,6 +221,17 @@ describe('suggestMeal', () => {
     assert.equal(familiar(timeZone), 2);
     // 04:30 UTC is Sunday breakfast: no profile there, so every pick is new.
     assert.equal(familiar('UTC'), 0);
+  });
+
+  it('the restaurant scorer counts days from today in the given zone', () => {
+    // Saturday 20:30 UTC is already Sunday 2026-03-29 in Kuala Lumpur. Fav
+    // Chinese was last visited 2026-03-22T04:00Z: 6 whole days before the KL
+    // date, 5 before the UTC date.
+    const now = new Date('2026-03-28T20:30:00Z');
+    const recency = (zone) => getSuggestions(db, { userId, cuisine: 'Chinese', now, timeZone: zone })
+      .find(s => s.name === 'Fav Chinese').scores.recency;
+    assert.equal(recency(timeZone), 6 / 30);
+    assert.equal(recency('UTC'), 5 / 30);
   });
 
   it('applies the cuisine filter to every pool', () => {

@@ -19,8 +19,9 @@ export function suggestRoutes({ db, now, rng, groupAllowed }) {
       cuisine: cuisine || null,
       priceRange: price_range || null,
       now: now(),
+      timeZone: req.timeZone,
     };
-    res.json(type === 'meal' ? suggestMeal(db, { ...opts, rng, timeZone: req.timeZone }) : getSuggestions(db, opts));
+    res.json(type === 'meal' ? suggestMeal(db, { ...opts, rng }) : getSuggestions(db, opts));
   });
   return r;
 }

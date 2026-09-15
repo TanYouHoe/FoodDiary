@@ -36,7 +36,8 @@ export function shouldStoreTimeZone(header, stored) {
 function partsIn(visitedAt, timeZone) {
   if (!isValidTimeZone(timeZone)) throw new RangeError(`Invalid time zone: ${timeZone}`);
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
+    timeZone, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
   }).formatToParts(new Date(visitedAt));
   return Object.fromEntries(parts.map(p => [p.type, p.value]));
 }
@@ -60,4 +61,30 @@ export function getDayOfWeek(visitedAt, timeZone) {
 export function getCalendarDate(visitedAt, timeZone) {
   const { year, month, day } = partsIn(visitedAt, timeZone);
   return `${year}-${month}-${day}`;
+}
+
+const MS_PER_DAY = 86400000;
+
+// date: YYYY-MM-DD. The calendar date `days` later (negative for earlier).
+// Plain UTC date arithmetic, so no zone is involved.
+export function shiftCalendarDate(date, days) {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d) + days * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
+// How far the zone's wall clock is ahead of UTC at an instant (ms).
+function zoneOffsetMs(instantMs, timeZone) {
+  const p = partsIn(instantMs, timeZone);
+  const wall = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second));
+  return wall - Math.floor(instantMs / 1000) * 1000;
+}
+
+// date: YYYY-MM-DD. The ISO instant of 00:00 on that date in the zone. The
+// second pass corrects for a daylight-saving change between midnight and the
+// first guess. In a zone that skips midnight, the instant lands an hour off.
+export function startOfDayInstant(date, timeZone) {
+  const [y, m, d] = date.split('-').map(Number);
+  const wallMidnight = Date.UTC(y, m - 1, d);
+  const firstGuess = wallMidnight - zoneOffsetMs(wallMidnight, timeZone);
+  return new Date(wallMidnight - zoneOffsetMs(firstGuess, timeZone)).toISOString();
 }
