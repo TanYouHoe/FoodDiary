@@ -23,7 +23,7 @@ import { checkServerConfig, shouldRequireTotp, parseTrustProxy, listenHost, list
 import { allowedOrigins } from './logic/http-policy.js';
 import { openDatabase } from './server/db.js';
 import { createApp } from './server/app.js';
-import { dataPathsFromEnv, DIST_DIR, defaultTimeZoneFromEnv } from './server/paths.js';
+import { dataPathsFromEnv, DIST_DIR, defaultTimeZoneFromEnv, readAppBuild } from './server/paths.js';
 
 const log = (line) => console.log(line);
 const env = process.env;
@@ -63,6 +63,7 @@ const { app } = createApp({
   requireTotp: shouldRequireTotp({ requireTotp: env.REQUIRE_TOTP, nodeEnv: env.NODE_ENV }),
   allowedOrigins: allowedOrigins({ publicOrigin: PUBLIC_ORIGIN, nodeEnv: env.NODE_ENV }),
   trustProxy: parseTrustProxy(env.TRUST_PROXY).value,
+  appBuild: readAppBuild(DIST_DIR),
   log,
 });
 

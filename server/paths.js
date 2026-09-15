@@ -3,7 +3,9 @@
 
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { DEFAULT_TIME_ZONE } from '../logic/config.js';
+import { normalizeBuildId, BUILD_ID_FILE } from '../logic/app-build.js';
 
 export const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const DATABASE_PATH = join(ROOT_DIR, 'fooddiary.db');
@@ -40,6 +42,17 @@ export function databasePathFromArgs(args, env) {
   if (args.includes('--db')) return flagValue(args, '--db');
   const dataDir = dataDirFromEnv(env);
   return dataDir ? databasePathIn(dataDir) : null;
+}
+
+// The build id `npm run build` wrote into <distDir>/build-id.txt, or null when
+// there is no build or no valid id.
+export function readAppBuild(distDir) {
+  if (!distDir) return null;
+  try {
+    return normalizeBuildId(readFileSync(join(distDir, BUILD_ID_FILE), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 // DEFAULT_TIME_ZONE as set, else the built-in default.

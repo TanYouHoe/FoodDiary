@@ -18,6 +18,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const HTML = Buffer.from('<!doctype html><script>alert(document.cookie)</script>');
 const NOT_IMAGE = { status: 400, body: { error: 'Not a supported image' } };
 const UPLOAD_CSP = "default-src 'none'; img-src 'self'; sandbox";
+const BUILD = '2637926-mf3k9x1';
 
 async function listen(app) {
   const server = await new Promise(resolve => { const s = app.listen(0, () => resolve(s)); });
@@ -68,7 +69,7 @@ describe('API hardening', () => {
     const db = openDatabase(':memory:', { defaultTimeZone: KL });
     const built = createApp({
       db, uploadsDir, distDir, jwtSecret: 'test-secret', defaultTimeZone: KL, requireTotp: false,
-      publicOrigin: PUBLIC, allowedOrigins: [PUBLIC], trustProxy: 'loopback',
+      publicOrigin: PUBLIC, allowedOrigins: [PUBLIC], trustProxy: 'loopback', appBuild: BUILD,
     });
     publicApp = { ...(await listen(built.app)), db };
 
@@ -208,9 +209,22 @@ describe('API hardening', () => {
       assert.match(res.headers.get('content-type') ?? '', /^(text|application)\/javascript/);
       assert.equal(res.headers.get('cache-control'), 'no-cache');
       const csp = res.headers.get('content-security-policy') ?? '';
-      assert.match(csp, /(^|; )script-src 'self'[ ;]/);
-      assert.doesNotMatch(csp, /worker-src/, 'worker-src falls back to script-src');
-      assert.doesNotMatch(csp, /unsafe-inline'[^;]*script|script-src[^;]*unsafe/);
+      const directives = Object.fromEntries(csp.split(';').map(part => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
+      assert.ok(directives['script-src'].includes("'self'"));
+      assert.deepEqual(directives['script-src'].filter(value => value.startsWith("'unsafe-")), []);
+      assert.equal(directives['worker-src'], undefined, 'worker-src falls back to script-src');
+    });
+
+    it('API answers name the server build when it is known, errors included', async () => {
+      for (const path of ['/api/health', '/api/meals', '/api/nope']) {
+        assert.equal((await get(path)).headers.get('x-app-build'), BUILD, path);
+      }
+    });
+
+    it('with no known build the header is left out', async () => {
+      for (const path of ['/api/health', '/api/nope']) {
+        assert.equal((await get(path, {}, plainApp)).headers.get('x-app-build'), null, path);
+      }
     });
 
     it('the hashed workbox runtime the worker imports is immutable', async () => {

@@ -7,6 +7,7 @@ import cors from 'cors';
 import { join, relative, sep } from 'node:path';
 import { isAllowedOrigin, securityHeaders, uploadSecurityHeaders, cacheControlFor } from '../logic/http-policy.js';
 import { isServablePhotoName } from '../logic/meals.js';
+import { normalizeBuildId, BUILD_HEADER } from '../logic/app-build.js';
 import { notFound } from './guards.js';
 import { makeTokens, makeAuthenticate, verifyGoogleCredential } from './auth.js';
 import { makeUpload, isUploadError } from './uploads.js';
@@ -45,6 +46,7 @@ export function createApp({
   requireTotp,
   allowedOrigins = [], // from logic/http-policy.js allowedOrigins
   trustProxy = false,  // from logic/config.js parseTrustProxy
+  appBuild = null,     // from server/paths.js readAppBuild; null leaves X-App-Build out
 }) {
   if (!isValidTimeZone(defaultTimeZone)) throw new Error(`createApp: defaultTimeZone must be an IANA time zone, got ${defaultTimeZone}`);
   if (typeof requireTotp !== 'boolean') throw new Error(`createApp: requireTotp must be a boolean, got ${requireTotp}`);
@@ -74,6 +76,11 @@ export function createApp({
 
   const headers = securityHeaders({ publicOrigin });
   app.use((req, res, next) => { res.set(headers); next(); });
+
+  // Every API answer names the deployed build, so an open page learns that a
+  // new version is out (src/api.js).
+  const build = normalizeBuildId(appBuild);
+  if (build) app.use('/api', (req, res, next) => { res.set(BUILD_HEADER, build); next(); });
 
   // CORS headers only for an allowed Origin; any other origin gets none, and
   // its preflight is not approved. Every answer varies by Origin for caches.
