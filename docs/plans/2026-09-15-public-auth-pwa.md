@@ -132,6 +132,12 @@ Tests: pure UI functions get tests under `tests/ui/` (they are plain `.js`, impo
 6. `tools/create-invite.js [--owner]`: opens the database at `FOOD_DIARY_DATA_DIR` (or the
    default path), creates an invite, prints the URL. This is how the first owner is made on a
    fresh server.
+7. **No stranger becomes owner.** Task 1's `promoteOwner` (lowest user id becomes owner at open)
+   exists only for databases created before roles. Once invites exist, a database with no users
+   gets its owner only from an owner invite: `ownerToPromote` must return nobody unless the
+   database already holds users from before the `invites` table (record that fact in the
+   migration). Test: a fresh database, a member signs up through a member invite (created in the
+   test), reopen — nobody is owner.
 7. Frontend: route `/invite/:code` (reachable signed out) checks the code and shows the
    create-account form with the invite; the Google button there passes the code. The login card
    says sign-up is by invite and drops "Create one". Settings gets an **Invites** tab for owners:
@@ -194,7 +200,10 @@ Tests: RFC vectors, window, replay, lockout policy; API flows computing real cod
    microphone=()`, HSTS when `PUBLIC_ORIGIN` is https.
 4. `app.set('trust proxy', TRUST_PROXY)` so lockout uses the real client IP behind cloudflared.
 5. **Uploads:** stored names are 32 random hex chars plus an extension from the MIME type — never
-   the client's file name (today `originalname` can carry `../`). Existing URLs keep working.
+   the client's file name (today `originalname` can carry `../`, and `x.html` sent as
+   `image/png` is served as HTML on the app origin). Check the file's magic bytes (JPEG, PNG,
+   WebP) after upload and delete a mismatch. `/uploads` responses carry
+   `X-Content-Type-Options: nosniff`. Existing URLs keep working.
 6. JSON body limit 1 MB. `/api/health` stays public and says nothing else.
 7. `index.html` and `sw.js` are served `Cache-Control: no-cache`; hashed assets long-lived.
 
