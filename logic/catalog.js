@@ -1,6 +1,8 @@
 // Logic: the meal-type and dish-type catalogues. The built-in entries, the
 // input rules, and the rule that built-in entries are read-only.
 
+import { categoryOfType, DISH_CATEGORY_ORDER, DISH_CATEGORY_NAMES } from './dishes.js';
+
 const slots = (...names) => names.map(name => ({ name }));
 
 export const SEED_MEAL_TYPES = [
@@ -40,9 +42,20 @@ export function checkMealTypeInput(body) {
   return { ok: true, value: { name: cleanName, cuisine_type: cuisine_type || null, slots: cleanSlots } };
 }
 
+export const BUILT_IN_DISH_TYPE_NAME = 'That name is already a built-in dish type';
+
+// A custom dish type may not stand for a built-in category ("main", "SOUP")
+// or repeat a built-in name ("Main Dish"), in any case.
+function isBuiltInDishTypeName(name) {
+  const category = categoryOfType(name);
+  return DISH_CATEGORY_ORDER.includes(category)
+    || Object.values(DISH_CATEGORY_NAMES).some(builtIn => categoryOfType(builtIn) === category);
+}
+
 export function checkDishTypeInput(body) {
   const name = trimmed(body.name);
   if (!name) return { ok: false, error: 'Name is required' };
+  if (isBuiltInDishTypeName(name)) return { ok: false, error: BUILT_IN_DISH_TYPE_NAME };
   return { ok: true, value: { name } };
 }
 

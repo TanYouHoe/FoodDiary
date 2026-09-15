@@ -6,14 +6,12 @@ import { api } from '../api.js';
 import { useAuth } from '../AuthContext.jsx';
 import { checkDishTypeForm } from '../../logic/catalog.js';
 import { catalogChangeRefusal } from '../../logic/access.js';
+import { allowedIds } from '../ui/access.js';
 import SettingsView, { DishTypeDialog } from '../ui/SettingsView.jsx';
 import AddMealTypeModal from './AddMealTypeModal.jsx';
 
-// The ids of the entries the server would let this user edit and delete.
-// kind: 'meal' | 'dish'. Edit and delete follow the same rule.
-const changeableIds = (user, entries, kind) => (user
-  ? entries.filter(e => catalogChangeRefusal(user, e, kind, 'edit') === null).map(e => e.id)
-  : []);
+// kind: 'meal' | 'dish'. The server refuses edit and delete for the same entries.
+const canChangeCatalog = (kind) => (user, entry) => catalogChangeRefusal(user, entry, kind, 'edit') === null;
 
 export default function SettingsModal({ dark, onToggleDark, onClose }) {
   const { user } = useAuth();
@@ -84,8 +82,8 @@ export default function SettingsModal({ dark, onToggleDark, onClose }) {
       dark={dark}
       mealTypes={mealTypes}
       dishTypes={dishTypes}
-      changeableMealTypeIds={changeableIds(user, mealTypes, 'meal')}
-      changeableDishTypeIds={changeableIds(user, dishTypes, 'dish')}
+      changeableMealTypeIds={allowedIds(user, mealTypes, canChangeCatalog('meal'))}
+      changeableDishTypeIds={allowedIds(user, dishTypes, canChangeCatalog('dish'))}
       profile={profile}
       confirmMealTypeId={confirmMealTypeId}
       confirmDishTypeId={confirmDishTypeId}

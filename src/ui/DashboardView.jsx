@@ -138,7 +138,7 @@ export default function DashboardView({
             <div className="suggestion-alternatives">
               {suggestions.slice(1).map((s, i) => (
                 <SuggestionCard
-                  key={s.restaurant_id || (i + 1)}
+                  key={s.id ?? i + 1}
                   suggestion={s}
                   className="suggestion-card-alt"
                   onDismiss={() => onDismiss(i + 1)}

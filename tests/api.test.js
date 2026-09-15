@@ -156,15 +156,21 @@ describe('API', () => {
     assert.equal((await call('DELETE', `/meal-types/${c.body.id}`, { token })).status, 404);
   });
 
-  it('dish types: 9 built-in, custom CRUD, duplicates 409, built-ins locked', async () => {
+  it('dish types: 9 built-in, custom CRUD, duplicates 409, built-in names 400, built-ins locked', async () => {
+    const BUILT_IN_NAME = { error: 'That name is already a built-in dish type' };
     const all = await call('GET', '/dish-types', { token });
     assert.equal(all.body.length, 9);
     assert.equal((await call('POST', '/dish-types', { token, body: {} })).status, 400);
-    assert.equal((await call('POST', '/dish-types', { token, body: { name: 'Soup' } })).status, 409);
+    for (const name of ['Soup', 'main', 'Main Dish']) {
+      const refused = await call('POST', '/dish-types', { token, body: { name } });
+      assert.deepEqual([refused.status, refused.body], [400, BUILT_IN_NAME], name);
+    }
     const c = await call('POST', '/dish-types', { token, body: { name: ' Curry ' } });
     assert.equal(c.status, 201);
     assert.equal(c.body.name, 'Curry');
-    assert.equal((await call('PUT', `/dish-types/${c.body.id}`, { token, body: { name: 'Rice' } })).status, 409);
+    assert.equal((await call('POST', '/dish-types', { token, body: { name: 'Curry' } })).status, 409);
+    const renamed = await call('PUT', `/dish-types/${c.body.id}`, { token, body: { name: 'Rice' } });
+    assert.deepEqual([renamed.status, renamed.body], [400, BUILT_IN_NAME]);
     assert.equal((await call('PUT', `/dish-types/${c.body.id}`, { token, body: { name: 'Curries' } })).body.name, 'Curries');
     const seed = all.body.find(t => t.name === 'Soup');
     assert.equal((await call('PUT', `/dish-types/${seed.id}`, { token, body: { name: 'x' } })).status, 403);

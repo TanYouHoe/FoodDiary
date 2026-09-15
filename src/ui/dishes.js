@@ -1,33 +1,21 @@
 // UI: dish category labels, the picker's category options, grouping for the
 // dish chips, and the dish list filters.
 
-import { DISH_CATEGORY_ORDER, DEFAULT_DISH_CATEGORY } from '../../logic/dishes.js';
+import { DISH_CATEGORY_ORDER, DISH_CATEGORY_NAMES, DEFAULT_DISH_CATEGORY, categoryOfType } from '../../logic/dishes.js';
 import { capitalize } from './format.js';
 
-export const CATEGORY_LABELS = {
-  main: 'Main Dish',
-  side: 'Side',
-  soup: 'Soup',
-  rice: 'Rice',
-  noodle: 'Noodle',
-  bread: 'Bread',
-  appetizer: 'Appetizer',
-  dessert: 'Dessert',
-  drink: 'Drink',
-};
-
-// A built-in category keeps its label; any other shows its capitalised name.
+// A built-in category shows its built-in name; any other its capitalised name.
 export function categoryLabel(category) {
-  return CATEGORY_LABELS[category] ?? capitalize(category);
+  return DISH_CATEGORY_NAMES[category] ?? capitalize(category);
 }
 
 const isBuiltIn = (category) => DISH_CATEGORY_ORDER.includes(category);
 const alphabetical = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 // typeNames: the dish type names from the server.
-// [{ value, label }]: the built-in order, then custom types lower-cased and alphabetical.
+// [{ value, label }]: the built-in order, then custom categories alphabetically.
 export function dishCategoryOptions(typeNames) {
-  const custom = [...new Set(typeNames.map(n => n.trim().toLowerCase()))]
+  const custom = [...new Set(typeNames.map(categoryOfType))]
     .filter(c => c && !isBuiltIn(c))
     .sort(alphabetical);
   return [...DISH_CATEGORY_ORDER, ...custom].map(value => ({ value, label: categoryLabel(value) }));

@@ -20,7 +20,7 @@ describe('infoWindowLines', () => {
     ]);
   });
 
-  it('keeps markup in a name as plain text', () => {
+  it('passes a name that holds markup through as a text line, not as markup', () => {
     const name = '<img src=x onerror=alert(1)>';
     const lines = infoWindowLines({ name, cuisine_type: '<b>x</b>', address: null });
     assert.deepEqual(lines, [

@@ -6,7 +6,7 @@
 import {
   rankRestaurants, mealContext, profileConfidence, profileAdventureRatio, rollSlotTypes,
   effectivePriceRange, familiarCutoff, staleCutoff, excludeRecentlyEaten, wantsOtherCuisines,
-  mergeByPriority, tagAsNew, assembleMealSuggestions, needsTopUp, topUpSuggestions,
+  withExplanations, mergeNewPool, tagAsNew, assembleMealSuggestions, needsTopUp, topUpSuggestions,
   RECENT_CUISINE_COUNT,
 } from '../logic/suggest.js';
 import { getCalendarDate } from '../logic/meal-period.js';
@@ -118,7 +118,7 @@ function familiarPool(db, { userId, cuisine, price, mealPeriod, today, timeZone 
   const recent = db.prepare('SELECT m.visited_at FROM meals m WHERE m.user_id = ? AND m.restaurant_id = ? AND m.visited_at >= ?');
   const recentVisits = new Map(candidates.map(r => [r.id, recent.all(userId, r.id, cutoff).map(row => row.visited_at)]));
 
-  return excludeRecentlyEaten(candidates, recentVisits, mealPeriod, timeZone);
+  return withExplanations(excludeRecentlyEaten(candidates, recentVisits, mealPeriod, timeZone), 'familiar');
 }
 
 // Places to try, in priority order: planned, never visited, not visited
@@ -160,5 +160,5 @@ function newPool(db, { userId, cuisine, price, today }) {
       .all(topCuisine.cuisine_type, ...f.params).map(toRestaurant)
     : [];
 
-  return mergeByPriority(planned, neverVisited, notLately, otherCuisines);
+  return mergeNewPool({ planned, neverVisited, notLately, otherCuisines });
 }

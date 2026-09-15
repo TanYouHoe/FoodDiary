@@ -6,6 +6,7 @@ import { api } from '../api';
 import { useAuth } from '../AuthContext.jsx';
 import { sortByPriority, checkPlannedForm, DEFAULT_PRIORITY } from '../../logic/planned.js';
 import { canDeletePlanned } from '../../logic/access.js';
+import { allowedIds } from '../ui/access.js';
 import PlannedView from '../ui/PlannedView.jsx';
 
 const emptyForm = { restaurantId: '', priority: DEFAULT_PRIORITY, notes: '' };
@@ -77,7 +78,7 @@ export default function Planned() {
       loading={loading}
       error={error}
       planned={planned}
-      removableIds={user ? planned.filter(p => canDeletePlanned(user, p)).map(p => p.id) : []}
+      removableIds={allowedIds(user, planned, canDeletePlanned)}
       restaurants={restaurants}
       groups={groups}
       groupId={groupId}

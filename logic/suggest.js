@@ -175,10 +175,42 @@ export function mergeByPriority(...lists) {
   return out;
 }
 
+// Why a pool picked a restaurant. source: 'familiar' | 'planned' |
+// 'never_visited' | 'not_lately' | 'other_cuisine' | 'new' (any new pick).
+const POOL_REASONS = {
+  familiar: () => 'One of your usual places for this time',
+  planned: (row) => `On your planned list (${row.priority} priority)`,
+  never_visited: () => 'Never tried before',
+  not_lately: () => "Haven't been in a while",
+  other_cuisine: () => 'A change from your usual cuisine',
+  new: () => 'Something new to try',
+};
+
+export function pickExplanation(row, source) {
+  return POOL_REASONS[source](row);
+}
+
+// A row keeps the explanation it has (the scorer's); otherwise it gets its pool's.
+const explained = (row, source) => (row.explanation ? row : { ...row, explanation: pickExplanation(row, source) });
+
+export function withExplanations(rows, source) {
+  return rows.map(r => explained(r, source));
+}
+
+// The new pool: each source explained, merged in priority order.
+export function mergeNewPool({ planned, neverVisited, notLately, otherCuisines }) {
+  return mergeByPriority(
+    withExplanations(planned, 'planned'),
+    withExplanations(neverVisited, 'never_visited'),
+    withExplanations(notLately, 'not_lately'),
+    withExplanations(otherCuisines, 'other_cuisine'),
+  );
+}
+
 // Suggestions when the profile carries no confidence: the scorer's picks, all new.
 export function tagAsNew(restaurants) {
   return restaurants.slice(0, SUGGESTION_COUNT).map((r, i) => ({
-    ...r,
+    ...explained(r, 'new'),
     suggestion_type: 'new',
     is_top_pick: i === 0,
   }));
@@ -211,7 +243,7 @@ export function assembleMealSuggestions(slotTypes, familiarPool, newPool) {
     }
     if (picked) {
       used.add(picked.id);
-      results.push({ ...picked, suggestion_type: source, is_top_pick: results.length === 0 });
+      results.push({ ...explained(picked, source), suggestion_type: source, is_top_pick: results.length === 0 });
     }
   }
   return results;
@@ -229,7 +261,7 @@ export function topUpSuggestions(results, fallback) {
     if (out.length >= SUGGESTION_COUNT) break;
     if (used.has(r.id)) continue;
     used.add(r.id);
-    out.push({ ...r, suggestion_type: 'new', is_top_pick: out.length === 0 });
+    out.push({ ...explained(r, 'new'), suggestion_type: 'new', is_top_pick: out.length === 0 });
   }
   return out;
 }

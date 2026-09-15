@@ -38,6 +38,9 @@ export default function RestaurantDetailModal({ restaurant, onClose, onUpdated, 
     }
   };
 
+  // Delete can show while the server still refuses it: the usage counts that
+  // canDeleteRestaurant needs are known only on the server. A refusal (409
+  // "Restaurant is used by other people") is shown in the error slot.
   const remove = async () => {
     setError('');
     try {

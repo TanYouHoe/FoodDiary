@@ -30,7 +30,7 @@ export function MultiPhotoPicker({ inputId, picker, existingUrls = [], newAlt })
             </div>
           ))}
           {picker.previews.map((url, i) => (
-            <div key={`new-${i}`} className="photo-grid-item">
+            <div key={url} className="photo-grid-item">
               <img src={url} alt={`${newAlt} ${i + 1}`} />
               <button
                 type="button"

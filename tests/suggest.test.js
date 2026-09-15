@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   scoreRestaurant, generateExplanation, rollSlotTypes, assembleMealSuggestions, topUpSuggestions,
   excludeRecentlyEaten, mergeByPriority, effectivePriceRange, profileConfidence, tagAsNew, rankRestaurants,
-  mealContext, familiarCutoff, staleCutoff,
+  mealContext, familiarCutoff, staleCutoff, pickExplanation, withExplanations, mergeNewPool,
 } from '../logic/suggest.js';
 import { openDatabase } from '../server/db.js';
 import { suggestMeal, getSuggestions } from '../server/suggestions.js';
@@ -153,6 +153,48 @@ describe('meal suggester rules', () => {
   });
 });
 
+describe('suggestion explanations', () => {
+  const r = (id, extra = {}) => ({ id, name: `R${id}`, ...extra });
+
+  it('names why each pool picked the restaurant', () => {
+    assert.equal(pickExplanation(r(1), 'familiar'), 'One of your usual places for this time');
+    assert.equal(pickExplanation(r(1, { priority: 'high' }), 'planned'), 'On your planned list (high priority)');
+    assert.equal(pickExplanation(r(1), 'never_visited'), 'Never tried before');
+    assert.equal(pickExplanation(r(1), 'not_lately'), "Haven't been in a while");
+    assert.equal(pickExplanation(r(1), 'other_cuisine'), 'A change from your usual cuisine');
+    assert.equal(pickExplanation(r(1), 'new'), 'Something new to try');
+  });
+
+  it('keeps an explanation a row already has, and does not change its arguments', () => {
+    const rows = [r(1, { explanation: 'Rated 4.5 stars' }), r(2)];
+    assert.deepEqual(withExplanations(rows, 'familiar').map(x => x.explanation), ['Rated 4.5 stars', 'One of your usual places for this time']);
+    assert.equal('explanation' in rows[1], false);
+  });
+
+  it('merges the new pool in priority order, each with its own reason', () => {
+    const pool = mergeNewPool({
+      planned: [r(2, { priority: 'low' })],
+      neverVisited: [r(1), r(2)],
+      notLately: [r(3)],
+      otherCuisines: [r(4), r(1)],
+    });
+    assert.deepEqual(pool.map(x => [x.id, x.explanation]), [
+      [2, 'On your planned list (low priority)'],
+      [1, 'Never tried before'],
+      [3, "Haven't been in a while"],
+      [4, 'A change from your usual cuisine'],
+    ]);
+  });
+
+  it('every assembled, topped-up or tagged suggestion carries an explanation', () => {
+    const assembled = assembleMealSuggestions(['familiar', 'new'], [r(1)], [r(2, { explanation: 'Never tried before' })]);
+    assert.deepEqual(assembled.map(s => s.explanation), ['One of your usual places for this time', 'Never tried before']);
+    const topped = topUpSuggestions(assembled, [r(3), r(4, { explanation: 'A proven favorite' })]);
+    assert.deepEqual(topped.map(s => s.explanation).slice(2), ['Something new to try']);
+    assert.deepEqual(tagAsNew([r(5, { explanation: 'Rated 4.0 stars' }), r(6)]).map(s => s.explanation), ['Rated 4.0 stars', 'Something new to try']);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // suggestMeal (Connector) — the rows it reads reach the rules correctly
 // ---------------------------------------------------------------------------
@@ -196,6 +238,9 @@ describe('suggestMeal', () => {
       ['Fav Chinese', 'familiar'], ['Fav Malay', 'familiar'], ['New Thai', 'new'],
     ]);
     assert.equal(out[0].is_top_pick, true);
+    assert.deepEqual(out.map(s => s.explanation), [
+      'One of your usual places for this time', 'One of your usual places for this time', 'Never tried before',
+    ]);
   });
 
   it('all-new rolls pick never-visited restaurants, then other cuisines', () => {
@@ -206,12 +251,14 @@ describe('suggestMeal', () => {
     assert.deepEqual(out.map(s => [s.name, s.suggestion_type]), [
       ['New Thai', 'new'], ['New Japanese', 'new'], ['Fav Malay', 'new'],
     ]);
+    assert.deepEqual(out.map(s => s.explanation), ['Never tried before', 'Never tried before', 'A change from your usual cuisine']);
   });
 
   it('falls back to the scorer, all new, when there is no profile', () => {
     const out = suggestMeal(db, { userId, now: testNow, timeZone, rng: () => 0 });
     assert.ok(out.length > 0 && out.length <= 3);
     assert.ok(out.every(s => s.suggestion_type === 'new'));
+    assert.ok(out.every(s => typeof s.explanation === 'string' && s.explanation.length > 0));
   });
 
   it('finds the profile slot in the zone it is given', () => {

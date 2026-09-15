@@ -21,7 +21,7 @@ describe('dishCategoryOptions', () => {
   });
 
   it('lists a custom type once and skips a blank name', () => {
-    const options = dishCategoryOptions(['Curry', 'curry', ' ', '']);
+    const options = dishCategoryOptions(['Curry', ' curry ', ' ', '']);
     assert.deepEqual(options.map(o => o.value), [...DISH_CATEGORY_ORDER, 'curry']);
   });
 

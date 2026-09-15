@@ -9,14 +9,30 @@ export function usePhotoPicker({ multiple }) {
   const [previews, setPreviews] = useState([]);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef(null);
+  const urlCache = useRef(new Map()); // File -> object URL, one per picked file
 
-  // One object URL per file, made by the effect and revoked by its cleanup.
-  // Under StrictMode the cleanup revokes and the re-run makes fresh URLs.
+  // Revoke the URLs of removed files, make URLs only for new files.
   useEffect(() => {
-    const urls = files.map(f => URL.createObjectURL(f));
-    setPreviews(urls);
-    return () => urls.forEach(url => URL.revokeObjectURL(url));
+    const cache = urlCache.current;
+    for (const [file, url] of cache) {
+      if (!files.includes(file)) {
+        URL.revokeObjectURL(url);
+        cache.delete(file);
+      }
+    }
+    for (const file of files) {
+      if (!cache.has(file)) cache.set(file, URL.createObjectURL(file));
+    }
+    setPreviews(files.map(f => cache.get(f)));
   }, [files]);
+
+  // On unmount, revoke every URL. Under StrictMode's simulated remount the
+  // effect above runs again first and makes fresh URLs for the empty cache.
+  useEffect(() => () => {
+    const cache = urlCache.current;
+    cache.forEach(url => URL.revokeObjectURL(url));
+    cache.clear();
+  }, []);
 
   const drop = (list) => {
     setDragging(false);

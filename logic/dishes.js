@@ -2,15 +2,33 @@
 
 export const DEFAULT_DISH_CATEGORY = 'main';
 
-// The categories the dish picker offers, in display order.
-export const DISH_CATEGORY_ORDER = ['main', 'side', 'soup', 'rice', 'noodle', 'bread', 'appetizer', 'dessert', 'drink'];
+// The built-in categories and their names, in the picker's display order.
+export const DISH_CATEGORY_NAMES = {
+  main: 'Main Dish',
+  side: 'Side',
+  soup: 'Soup',
+  rice: 'Rice',
+  noodle: 'Noodle',
+  bread: 'Bread',
+  appetizer: 'Appetizer',
+  dessert: 'Dessert',
+  drink: 'Drink',
+};
+
+export const DISH_CATEGORY_ORDER = Object.keys(DISH_CATEGORY_NAMES);
+
+// The category a dish type name stands for. The one home of this mapping.
+export function categoryOfType(typeName) {
+  return typeName.trim().toLowerCase();
+}
 
 // A dish takes the first dish type whose name appears in the dish name.
-// typeNames: dish type names in the order to try them.
+// typeNames: dish type names in the order to try them. A blank name matches nothing.
 export function categorizeDish(dishName, typeNames) {
   const lower = dishName.toLowerCase().trim();
   for (const typeName of typeNames) {
-    if (lower.includes(typeName.toLowerCase())) return typeName.toLowerCase();
+    const category = categoryOfType(typeName);
+    if (category && lower.includes(category)) return category;
   }
   return DEFAULT_DISH_CATEGORY;
 }

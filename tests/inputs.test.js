@@ -122,6 +122,14 @@ describe('checkDishTypeInput', () => {
       assert.deepEqual(checkDishTypeInput({ name }), { ok: false, error: 'Name is required' });
     }
   });
+  it('refuses the name of a built-in category or its label, in any case', () => {
+    for (const name of ['main', ' SOUP ', 'Main Dish', 'main dish', 'Appetizer']) {
+      assert.deepEqual(checkDishTypeInput({ name }), { ok: false, error: 'That name is already a built-in dish type' }, name);
+    }
+  });
+  it('accepts a name that only contains a built-in name', () => {
+    assert.equal(checkDishTypeInput({ name: 'Main Course' }).ok, true);
+  });
 });
 
 describe('form checks use the server rule', () => {
