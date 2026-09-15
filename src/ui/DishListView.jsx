@@ -1,11 +1,11 @@
 // UI: dish chips grouped by category, with drag between categories, and the
-// add-dish row.
+// add-dish row. `categoryOptions`: [{ value, label }] from dishCategoryOptions.
 
-import { CATEGORY_OPTIONS, groupDishes } from './dishes.js';
+import { groupDishes } from './dishes.js';
 import { PlusIcon } from './icons.jsx';
 
 export default function DishListView({
-  dishes, disabled, input, category, dragIndex, dragOverCategory,
+  dishes, categoryOptions, disabled, input, category, dragIndex, dragOverCategory,
   onInput, onCategory, onAdd, onRemove, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
 }) {
   const groups = groupDishes(dishes);
@@ -57,7 +57,7 @@ export default function DishListView({
             value={category}
             onChange={(e) => onCategory(e.target.value)}
           >
-            {CATEGORY_OPTIONS.map(c => (
+            {categoryOptions.map(c => (
               <option key={c.value} value={c.value}>{c.label}</option>
             ))}
           </select>

@@ -3,11 +3,24 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { loadGoogleMaps, currentPosition } from '../google.js';
-import { infoWindowHtml } from '../ui/lists.js';
+import { infoWindowLines } from '../ui/lists.js';
 import { MapCanvas, MapError } from '../ui/MapViews.jsx';
 
 const KUALA_LUMPUR = { lat: 3.139, lng: 101.6869 };
 const GEOLOCATION_TIMEOUT_MS = 5000;
+
+// The info window as DOM nodes. Every line is set as text, so a restaurant
+// name never becomes markup.
+function infoWindowNode(restaurant) {
+  const root = document.createElement('div');
+  infoWindowLines(restaurant).forEach((line, i) => {
+    if (i > 0) root.appendChild(document.createElement('br'));
+    const el = document.createElement(line.strong ? 'strong' : 'span');
+    el.textContent = line.text;
+    root.appendChild(el);
+  });
+  return root;
+}
 
 export default function GoogleMap({ apiKey, restaurants }) {
   const canvasRef = useRef(null);
@@ -27,7 +40,7 @@ export default function GoogleMap({ apiKey, restaurants }) {
           geocoder.geocode({ address: r.address }, (results, status) => {
             if (status !== 'OK' || !results[0]) return;
             const marker = new maps.Marker({ map, position: results[0].geometry.location, title: r.name });
-            const infoWindow = new maps.InfoWindow({ content: infoWindowHtml(r) });
+            const infoWindow = new maps.InfoWindow({ content: infoWindowNode(r) });
             marker.addListener('click', () => infoWindow.open(map, marker));
           });
         });

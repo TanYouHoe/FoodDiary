@@ -1,6 +1,7 @@
 // UI: the log-a-meal and edit-meal dialogs. One form, two framings.
 // mode 'add': a <form> that submits. mode 'edit': Cancel resets, Save saves.
-// Slots: `photos` (the picker), `dishEditor`, `restaurantDialog`.
+// Slots: `photos` (the picker), `dishEditor`, `restaurantDialog` (rendered
+// outside the form, so its own form is never nested).
 
 import StarPicker from './StarPicker.jsx';
 import { AiIcon } from './icons.jsx';
@@ -55,8 +56,6 @@ export default function MealFormDialog({
           </button>
         </div>
       </div>
-
-      {restaurantDialog}
 
       <div className="form-group">
         <label>Dishes</label>
@@ -143,6 +142,9 @@ export default function MealFormDialog({
             </div>
           </>
         )}
+
+        {/* Outside the <form>: the add-restaurant dialog holds its own form. */}
+        {restaurantDialog}
       </div>
     </div>
   );

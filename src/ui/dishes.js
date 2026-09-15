@@ -1,6 +1,8 @@
-// UI: dish category labels, grouping for the dish chips, and the dish list filters.
+// UI: dish category labels, the picker's category options, grouping for the
+// dish chips, and the dish list filters.
 
 import { DISH_CATEGORY_ORDER, DEFAULT_DISH_CATEGORY } from '../../logic/dishes.js';
+import { capitalize } from './format.js';
 
 export const CATEGORY_LABELS = {
   main: 'Main Dish',
@@ -14,10 +16,25 @@ export const CATEGORY_LABELS = {
   drink: 'Drink',
 };
 
-export const CATEGORY_OPTIONS = DISH_CATEGORY_ORDER.map(value => ({ value, label: CATEGORY_LABELS[value] }));
+// A built-in category keeps its label; any other shows its capitalised name.
+export function categoryLabel(category) {
+  return CATEGORY_LABELS[category] ?? capitalize(category);
+}
 
-// [{ category, label, dishes: [{ ...dish, index }] }] in picker order.
-// A category outside the picker's list is not shown.
+const isBuiltIn = (category) => DISH_CATEGORY_ORDER.includes(category);
+const alphabetical = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+// typeNames: the dish type names from the server.
+// [{ value, label }]: the built-in order, then custom types lower-cased and alphabetical.
+export function dishCategoryOptions(typeNames) {
+  const custom = [...new Set(typeNames.map(n => n.trim().toLowerCase()))]
+    .filter(c => c && !isBuiltIn(c))
+    .sort(alphabetical);
+  return [...DISH_CATEGORY_ORDER, ...custom].map(value => ({ value, label: categoryLabel(value) }));
+}
+
+// [{ category, label, dishes: [{ ...dish, index }] }]: every category a dish
+// has, the built-in order first, then the others alphabetically.
 export function groupDishes(dishes) {
   const grouped = {};
   dishes.forEach((dish, index) => {
@@ -25,9 +42,9 @@ export function groupDishes(dishes) {
     if (!grouped[category]) grouped[category] = [];
     grouped[category].push({ ...dish, index });
   });
-  return DISH_CATEGORY_ORDER
-    .filter(c => grouped[c])
-    .map(c => ({ category: c, label: CATEGORY_LABELS[c], dishes: grouped[c] }));
+  const others = Object.keys(grouped).filter(c => !isBuiltIn(c)).sort(alphabetical);
+  return [...DISH_CATEGORY_ORDER.filter(c => grouped[c]), ...others]
+    .map(c => ({ category: c, label: categoryLabel(c), dishes: grouped[c] }));
 }
 
 export function dishCategories(dishes) {

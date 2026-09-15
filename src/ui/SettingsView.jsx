@@ -25,8 +25,9 @@ function EntryDetails({ entry }) {
   );
 }
 
-// Custom entries (editable) above the built-in entries (locked).
-function CatalogTab({ entries, emptyText, withSlots, confirmId, onAdd, onEdit, onAskDelete, onCancelDelete, onDelete }) {
+// Custom entries above the built-in entries (locked). changeableIds: ids of the
+// custom entries that show edit and delete controls.
+function CatalogTab({ entries, changeableIds, emptyText, withSlots, confirmId, onAdd, onEdit, onAskDelete, onCancelDelete, onDelete }) {
   const custom = entries.filter(e => !e.is_seed);
   const system = entries.filter(e => e.is_seed);
   return (
@@ -46,15 +47,17 @@ function CatalogTab({ entries, emptyText, withSlots, confirmId, onAdd, onEdit, o
                   <span className="settings-item-name">{entry.name}</span>
                   {withSlots && <EntryDetails entry={entry} />}
                 </div>
-                <div className="settings-item-actions">
-                  <button className="icon-btn icon-btn-edit" onClick={() => onEdit(entry)} title="Edit">
-                    <EditIcon size={14} />
-                  </button>
-                  <button className="icon-btn icon-btn-delete" onClick={() => onAskDelete(entry.id)} title="Delete">
-                    <TrashIcon size={14} />
-                  </button>
-                </div>
-                {confirmId === entry.id && (
+                {changeableIds.includes(entry.id) && (
+                  <div className="settings-item-actions">
+                    <button className="icon-btn icon-btn-edit" onClick={() => onEdit(entry)} title="Edit">
+                      <EditIcon size={14} />
+                    </button>
+                    <button className="icon-btn icon-btn-delete" onClick={() => onAskDelete(entry.id)} title="Delete">
+                      <TrashIcon size={14} />
+                    </button>
+                  </div>
+                )}
+                {confirmId === entry.id && changeableIds.includes(entry.id) && (
                   <div className="settings-item-confirm">
                     <span>Delete?</span>
                     <button className="btn-secondary btn-sm" onClick={onCancelDelete}>No</button>
@@ -159,7 +162,7 @@ export function DishTypeDialog({ isEdit, name, error, submitting, onName, onSubm
 }
 
 export default function SettingsView({
-  activeTab, loading, error, dark, mealTypes, dishTypes, profile,
+  activeTab, loading, error, dark, mealTypes, dishTypes, changeableMealTypeIds, changeableDishTypeIds, profile,
   confirmMealTypeId, confirmDishTypeId, mealTypeDialog, dishTypeDialog,
   onTab, onClose, onToggleDark,
   onAddMealType, onEditMealType, onAskDeleteMealType, onCancelDeleteMealType, onDeleteMealType,
@@ -217,6 +220,7 @@ export default function SettingsView({
                   {mealTypeDialog}
                   <CatalogTab
                     entries={mealTypes}
+                    changeableIds={changeableMealTypeIds}
                     emptyText="No custom meal types yet"
                     withSlots
                     confirmId={confirmMealTypeId}
@@ -234,6 +238,7 @@ export default function SettingsView({
                   {dishTypeDialog}
                   <CatalogTab
                     entries={dishTypes}
+                    changeableIds={changeableDishTypeIds}
                     emptyText="No custom dish types yet"
                     confirmId={confirmDishTypeId}
                     onAdd={onAddDishType}

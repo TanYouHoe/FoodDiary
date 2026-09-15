@@ -1,4 +1,5 @@
 // UI: the planned visits page. A group switch, the add form and the list.
+// removableIds: ids of the planned visits that show a Remove button.
 
 import { toPlannedRows } from './lists.js';
 
@@ -9,7 +10,7 @@ const PRIORITY_OPTIONS = [
 ];
 
 export default function PlannedView({
-  loading, error, planned, restaurants, groups, groupId, form, submitting,
+  loading, error, planned, removableIds, restaurants, groups, groupId, form, submitting,
   onGroup, onField, onAdd, onRemove,
 }) {
   if (loading) return <div className="loading">Loading planned visits...</div>;
@@ -87,9 +88,11 @@ export default function PlannedView({
                 <span className={`badge ${p.priorityClass}`}>{p.priority}</span>
                 {p.notes && <span className="planned-notes">{p.notes}</span>}
               </div>
-              <button className="btn-danger btn-sm" onClick={() => onRemove(p.id)}>
-                Remove
-              </button>
+              {removableIds.includes(p.id) && (
+                <button className="btn-danger btn-sm" onClick={() => onRemove(p.id)}>
+                  Remove
+                </button>
+              )}
             </div>
           ))}
         </div>

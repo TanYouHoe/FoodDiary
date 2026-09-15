@@ -63,8 +63,12 @@ export function toPatternRows(profile) {
   }));
 }
 
-// HTML for a map marker's info window. Names are inserted unescaped, as they
-// always have been; recorded as a defect in the plan.
-export function infoWindowHtml(r) {
-  return `<strong>${r.name}</strong>${r.cuisine_type ? `<br/>${r.cuisine_type}` : ''}${r.address ? `<br/>${r.address}` : ''}`;
+// A map marker's info window as plain text lines: [{ text, strong }].
+// The caller sets each line as text, never as HTML.
+export function infoWindowLines(r) {
+  return [
+    { text: r.name, strong: true },
+    ...(r.cuisine_type ? [{ text: r.cuisine_type, strong: false }] : []),
+    ...(r.address ? [{ text: r.address, strong: false }] : []),
+  ];
 }

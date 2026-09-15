@@ -1,5 +1,5 @@
 // UI: a saved meal, read-only, with edit and delete controls.
-// Slot: `photos` (the carousel).
+// Slot: `photos` (the carousel). canChange: show the edit and delete controls.
 
 import StarPicker from './StarPicker.jsx';
 import { EditIcon, TrashIcon } from './icons.jsx';
@@ -7,7 +7,7 @@ import { groupDishes } from './dishes.js';
 import { formatDateTime } from './format.js';
 
 export default function MealDetailView({
-  meal, photos, confirmDelete, error,
+  meal, canChange, photos, confirmDelete, error,
   onClose, onEdit, onAskDelete, onCancelDelete, onDelete,
 }) {
   const dishGroups = Array.isArray(meal.dishes) ? groupDishes(meal.dishes) : [];
@@ -26,7 +26,7 @@ export default function MealDetailView({
               {meal.title && <span className="meal-detail-title">{meal.title}</span>}
               <span className="meal-detail-time">{formatDateTime(meal.visited_at)}</span>
             </div>
-            {!confirmDelete && (
+            {canChange && !confirmDelete && (
               <div className="meal-detail-header-icons">
                 <button className="icon-btn icon-btn-edit" onClick={onEdit} title="Edit">
                   <EditIcon />

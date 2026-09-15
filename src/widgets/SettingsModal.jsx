@@ -3,11 +3,20 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useAuth } from '../AuthContext.jsx';
 import { checkDishTypeForm } from '../../logic/catalog.js';
+import { catalogChangeRefusal } from '../../logic/access.js';
 import SettingsView, { DishTypeDialog } from '../ui/SettingsView.jsx';
 import AddMealTypeModal from './AddMealTypeModal.jsx';
 
+// The ids of the entries the server would let this user edit and delete.
+// kind: 'meal' | 'dish'. Edit and delete follow the same rule.
+const changeableIds = (user, entries, kind) => (user
+  ? entries.filter(e => catalogChangeRefusal(user, e, kind, 'edit') === null).map(e => e.id)
+  : []);
+
 export default function SettingsModal({ dark, onToggleDark, onClose }) {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('appearance');
   const [mealTypes, setMealTypes] = useState([]);
   const [dishTypes, setDishTypes] = useState([]);
@@ -75,6 +84,8 @@ export default function SettingsModal({ dark, onToggleDark, onClose }) {
       dark={dark}
       mealTypes={mealTypes}
       dishTypes={dishTypes}
+      changeableMealTypeIds={changeableIds(user, mealTypes, 'meal')}
+      changeableDishTypeIds={changeableIds(user, dishTypes, 'dish')}
       profile={profile}
       confirmMealTypeId={confirmMealTypeId}
       confirmDishTypeId={confirmDishTypeId}

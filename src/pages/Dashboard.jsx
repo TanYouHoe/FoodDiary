@@ -3,7 +3,6 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '../api';
-import { toMealSuggestions } from '../ui/suggestions.js';
 import DashboardView from '../ui/DashboardView.jsx';
 import AddMealModal from '../widgets/AddMealModal';
 import MealDetailModal from '../widgets/MealDetailModal';
@@ -51,7 +50,7 @@ export default function Dashboard() {
       if (filters.mode === 'group' && filters.groupId) params.group_id = filters.groupId;
       params.type = 'meal';
       if (filters.mealTypeId) params.meal_type_id = filters.mealTypeId;
-      setSuggestions(toMealSuggestions(await api.getSuggestions(params)));
+      setSuggestions(await api.getSuggestions(params));
     } catch (err) {
       setError(err.message || 'Failed to fetch suggestions');
       setSuggestions([]);

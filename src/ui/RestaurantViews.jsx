@@ -92,7 +92,8 @@ export function RestaurantDialog({ mode, form, error, submitting, photo, onField
   );
 }
 
-export function RestaurantDetailView({ restaurant, confirmDelete, error, onClose, onEdit, onAskDelete, onCancelDelete, onDelete }) {
+// canChange: show the edit and delete controls.
+export function RestaurantDetailView({ restaurant, canChange, confirmDelete, error, onClose, onEdit, onAskDelete, onCancelDelete, onDelete }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content restaurant-detail-modal" onClick={(e) => e.stopPropagation()}>
@@ -109,7 +110,7 @@ export function RestaurantDetailView({ restaurant, confirmDelete, error, onClose
             <div className="meal-detail-header-left">
               <h3>{restaurant.name}</h3>
             </div>
-            {!confirmDelete && (
+            {canChange && !confirmDelete && (
               <div className="meal-detail-header-icons">
                 <button className="icon-btn icon-btn-edit" onClick={onEdit} title="Edit">
                   <EditIcon />

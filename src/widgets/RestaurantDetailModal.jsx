@@ -2,13 +2,16 @@
 
 import { useState } from 'react';
 import { api } from '../api.js';
+import { useAuth } from '../AuthContext.jsx';
 import { usePhotoPicker } from '../hooks/usePhotoPicker.js';
 import { checkRestaurantForm } from '../../logic/restaurants.js';
+import { canChangeRestaurant } from '../../logic/access.js';
 import { restaurantFormFrom } from '../ui/forms.js';
 import { RestaurantDialog, RestaurantDetailView } from '../ui/RestaurantViews.jsx';
 import { SinglePhotoPicker } from '../ui/PhotoPickers.jsx';
 
 export default function RestaurantDetailModal({ restaurant, onClose, onUpdated, onDeleted }) {
+  const { user } = useAuth();
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [form, setForm] = useState(() => restaurantFormFrom(restaurant));
@@ -36,12 +39,14 @@ export default function RestaurantDetailModal({ restaurant, onClose, onUpdated, 
   };
 
   const remove = async () => {
+    setError('');
     try {
       await api.deleteRestaurant(restaurant.id);
       onDeleted();
       onClose();
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to delete restaurant');
+      setConfirmDelete(false);
     }
   };
 
@@ -57,6 +62,7 @@ export default function RestaurantDetailModal({ restaurant, onClose, onUpdated, 
     return (
       <RestaurantDetailView
         restaurant={restaurant}
+        canChange={Boolean(user) && canChangeRestaurant(user, restaurant)}
         confirmDelete={confirmDelete}
         error={error}
         onClose={onClose}

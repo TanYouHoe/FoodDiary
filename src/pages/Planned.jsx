@@ -3,12 +3,15 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '../api';
+import { useAuth } from '../AuthContext.jsx';
 import { sortByPriority, checkPlannedForm, DEFAULT_PRIORITY } from '../../logic/planned.js';
+import { canDeletePlanned } from '../../logic/access.js';
 import PlannedView from '../ui/PlannedView.jsx';
 
 const emptyForm = { restaurantId: '', priority: DEFAULT_PRIORITY, notes: '' };
 
 export default function Planned() {
+  const { user } = useAuth();
   const [planned, setPlanned] = useState([]);
   const [restaurants, setRestaurants] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -74,6 +77,7 @@ export default function Planned() {
       loading={loading}
       error={error}
       planned={planned}
+      removableIds={user ? planned.filter(p => canDeletePlanned(user, p)).map(p => p.id) : []}
       restaurants={restaurants}
       groups={groups}
       groupId={groupId}

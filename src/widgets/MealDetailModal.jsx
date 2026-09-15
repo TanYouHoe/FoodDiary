@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useAuth } from '../AuthContext.jsx';
 import { useMealForm, visitedAtOf } from '../hooks/useMealForm.js';
 import { mealFormToInput } from '../../logic/meals.js';
+import { canChangeMeal } from '../../logic/access.js';
 import { mealFormFrom } from '../ui/forms.js';
 import MealDetailView from '../ui/MealDetailView.jsx';
 import MealFormDialog from '../ui/MealFormDialog.jsx';
@@ -13,6 +15,7 @@ import DishList from './DishList.jsx';
 import AddRestaurantModal from './AddRestaurantModal.jsx';
 
 export default function MealDetailModal({ meal, onClose, onUpdated, onDeleted }) {
+  const { user } = useAuth();
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const m = useMealForm(() => mealFormFrom(meal));
@@ -59,6 +62,7 @@ export default function MealDetailModal({ meal, onClose, onUpdated, onDeleted })
     return (
       <MealDetailView
         meal={meal}
+        canChange={Boolean(user) && canChangeMeal(user, meal)}
         photos={<PhotoCarousel urls={meal.photos} />}
         confirmDelete={confirmDelete}
         error={m.error}

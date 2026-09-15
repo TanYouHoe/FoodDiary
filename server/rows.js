@@ -24,9 +24,10 @@ export const MEAL_DISH_FIELDS = ['id', 'name', 'category'];
 
 export const DISH_SUMMARY_FIELDS = ['name', 'category', 'times_eaten', 'best_rating', 'last_eaten', 'restaurants'];
 
-export const MEAL_TYPE_FIELDS = ['id', 'name', 'cuisine_type', 'slots', 'is_seed'];
+// created_by lets the browser ask logic/access.js whether to offer edit and delete.
+export const MEAL_TYPE_FIELDS = ['id', 'name', 'cuisine_type', 'slots', 'is_seed', 'created_by'];
 
-export const DISH_TYPE_FIELDS = ['id', 'name', 'keywords', 'is_seed'];
+export const DISH_TYPE_FIELDS = ['id', 'name', 'keywords', 'is_seed', 'created_by'];
 
 export const GROUP_FIELDS = ['id', 'name', 'invite_code', 'created_by', 'created_at'];
 

@@ -1,14 +1,22 @@
 // UI connector: picked photo files, their preview URLs, and the drag state.
 // multiple: many photos up to the meal limit; otherwise one photo.
 
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { addPhotos, isImageFile } from '../../logic/meals.js';
 
 export function usePhotoPicker({ multiple }) {
   const [files, setFiles] = useState([]);
+  const [previews, setPreviews] = useState([]);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef(null);
-  const previews = useMemo(() => files.map(f => URL.createObjectURL(f)), [files]);
+
+  // One object URL per file, made by the effect and revoked by its cleanup.
+  // Under StrictMode the cleanup revokes and the re-run makes fresh URLs.
+  useEffect(() => {
+    const urls = files.map(f => URL.createObjectURL(f));
+    setPreviews(urls);
+    return () => urls.forEach(url => URL.revokeObjectURL(url));
+  }, [files]);
 
   const drop = (list) => {
     setDragging(false);
