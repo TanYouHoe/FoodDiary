@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   signInStep, effectiveScope, scopeAllows, isTokenOfType, isCurrentTokenVersion, canDisableTotp,
-  needsFactorProof, shouldReusePendingSecret, factorProof, TOKEN_SCOPES, TOKEN_TYPES, ENROLL_SCOPE_ROUTES, MFA_TOKEN_TTL_SECONDS,
+  needsFactorProof, shouldReusePendingSecret, PENDING_SECRET_MAX_AGE_MS, factorProof, TOKEN_SCOPES, TOKEN_TYPES, ENROLL_SCOPE_ROUTES, MFA_TOKEN_TTL_SECONDS,
 } from '../logic/two-factor.js';
 import { canListUsers, totpResetRefusal, NOT_ALLOWED, OWN_FACTOR_RESET } from '../logic/access.js';
 import { shouldRequireTotp, checkServerConfig } from '../logic/config.js';
@@ -84,10 +84,16 @@ describe('factor changes', () => {
     assert.equal(needsFactorProof({ totpEnabled: true }), true);
     assert.equal(needsFactorProof({ totpEnabled: false }), false);
   });
-  it('first enrollment keeps the pending secret; a replace always makes a new one', () => {
-    assert.equal(shouldReusePendingSecret({ totpEnabled: false, hasPending: true }), true);
-    assert.equal(shouldReusePendingSecret({ totpEnabled: false, hasPending: false }), false);
-    assert.equal(shouldReusePendingSecret({ totpEnabled: true, hasPending: true }), false);
+  it('first enrollment keeps a pending secret younger than 30 minutes; a replace always makes a new one', () => {
+    const T = 1_800_000_000_000;
+    const reuse = (extra) => shouldReusePendingSecret({ totpEnabled: false, hasPending: true, pendingCreatedAtMs: T, nowMs: T, ...extra });
+    assert.equal(PENDING_SECRET_MAX_AGE_MS, 30 * 60 * 1000);
+    assert.equal(reuse({}), true);
+    assert.equal(reuse({ nowMs: T + PENDING_SECRET_MAX_AGE_MS - 1 }), true);
+    assert.equal(reuse({ nowMs: T + PENDING_SECRET_MAX_AGE_MS }), false, 'too old: a new secret');
+    assert.equal(reuse({ pendingCreatedAtMs: null }), false, 'no creation time: a new secret');
+    assert.equal(reuse({ hasPending: false }), false);
+    assert.equal(reuse({ totpEnabled: true }), false);
   });
 });
 

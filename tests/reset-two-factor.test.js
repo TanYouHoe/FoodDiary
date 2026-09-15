@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runResetTwoFactor } from '../tools/reset-two-factor.js';
 import { openDatabase } from '../server/db.js';
+import { codeKeys } from '../logic/lockout.js';
 
 describe('runResetTwoFactor', () => {
   let dir;
@@ -41,6 +42,23 @@ describe('runResetTwoFactor', () => {
     assert.deepEqual(run(['--db', file, '--email']), { exitCode: 1 });
     assert.deepEqual(opened, []);
     assert.ok(lines.some(line => /--db <path>/.test(line) && /--email/.test(line) && /FOOD_DIARY_DATA_DIR/.test(line)), 'prints the usage');
+  });
+
+  it('clears the code lockout of that user only, so a new setup is not blocked', () => {
+    const keys = withDb((db) => {
+      const ids = Object.fromEntries(db.prepare('SELECT email, id FROM users').all().map(u => [u.email, u.id]));
+      const put = db.prepare('INSERT INTO auth_failures (key, count, window_start, locked_until) VALUES (?, 30, 0, 9999999999999)');
+      // The owner's code keys (two account keys and the IP key) and the member's account keys.
+      const owner = codeKeys(ids['owner@cli.test'], '1.2.3.4').map(k => k.key);
+      const member = codeKeys(ids['member@cli.test'], '1.2.3.4').filter(k => k.kind !== 'ip').map(k => k.key);
+      for (const key of [...owner, ...member]) put.run(key);
+      return { member };
+    });
+    assert.deepEqual(run(['--db', file, '--email', 'owner@cli.test']), { exitCode: 0 });
+    withDb((db) => {
+      const left = db.prepare('SELECT key FROM auth_failures ORDER BY key').all().map(r => r.key);
+      assert.deepEqual(left, ['ip:1.2.3.4', ...keys.member].sort(), 'the IP key and the other user stay');
+    });
   });
 
   it('clears the factor and backup codes and ends the sessions of that user only', () => {

@@ -11,14 +11,14 @@ import {
 } from '../../logic/two-factor.js';
 import { badRequest, notAllowed } from '../guards.js';
 
-// Mounted at /api/auth/totp. guard: server/factor-guard.js.
-export function totpRoutes({ authenticate, twoFactor, guard, sessions, requireTotp }) {
+// Mounted at /api/auth/totp. guard: server/factor-guard.js. now: () => Date.
+export function totpRoutes({ authenticate, twoFactor, guard, sessions, requireTotp, now }) {
   const r = Router();
   r.use(authenticate);
 
   // { secret, otpauth_url }. Replacing an enabled factor needs { code } (spent)
   // or { backup_code } (checked now, spent by enable). A first enrollment gets
-  // the same pending secret again until it is confirmed or cancelled.
+  // the same pending secret again for 30 minutes, until confirmed or cancelled.
   r.post('/setup', async (req, res) => {
     const { totpEnabled } = req.auth;
     let backupHash = null;
@@ -29,8 +29,10 @@ export function totpRoutes({ authenticate, twoFactor, guard, sessions, requireTo
       if (!ok) return;
       backupHash = verified.backupHash;
     }
-    const reusePending = shouldReusePendingSecret({ totpEnabled, hasPending: twoFactor.state(req.user.id).hasPending });
-    res.json(twoFactor.startSetup(req.user.id, req.user.email, { reusePending, backupHash }));
+    const at = now();
+    const { hasPending, pendingCreatedAtMs } = twoFactor.state(req.user.id);
+    const reusePending = shouldReusePendingSecret({ totpEnabled, hasPending, pendingCreatedAtMs, nowMs: at.getTime() });
+    res.json(twoFactor.startSetup(req.user.id, req.user.email, { reusePending, backupHash, now: at }));
   });
 
   // Forgets the pending secret; an enabled factor stays as it is.

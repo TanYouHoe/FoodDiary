@@ -21,6 +21,7 @@ const INVALID_CODE = { status: 401, body: { error: 'Invalid code' } };
 const MFA_STEP_EXPIRED = { status: 401, body: { error: 'Sign-in step expired. Sign in again.' } };
 const BACKUP_USED_MEANWHILE = { status: 409, body: { error: 'The backup code that started this setup is already used. Start the setup again.' } };
 const CODE_REQUIRED = { status: 400, body: { error: 'Code required' } };
+const LOCKED = { status: 429, body: { error: 'Too many attempts. Try again later.' } };
 
 describe('API two-factor', () => {
   let db;
@@ -124,6 +125,28 @@ describe('API two-factor', () => {
     assert.equal(db.prepare('SELECT totp_pending_secret FROM users WHERE id = ?').get(reg.body.user.id).totp_pending_secret, null);
     const third = await call('POST', '/auth/totp/setup', { token });
     assert.notEqual(third.body.secret, first.body.secret);
+
+    tick(29 * 60);
+    assert.equal((await call('POST', '/auth/totp/setup', { token })).body.secret, third.body.secret, 'younger than 30 minutes: kept');
+    tick(2 * 60);
+    const fourth = await call('POST', '/auth/totp/setup', { token });
+    assert.notEqual(fourth.body.secret, third.body.secret, '30 minutes or older: a new secret');
+
+    assert.equal((await call('POST', '/auth/logout-all', { token })).status, 204);
+    assert.equal(db.prepare('SELECT totp_pending_secret FROM users WHERE id = ?').get(reg.body.user.id).totp_pending_secret, null,
+      'sign out everywhere forgets the pending secret');
+  });
+
+  it('two enables with the same code at once: exactly one succeeds', async () => {
+    const reg = await register('pat');
+    const setup = await call('POST', '/auth/totp/setup', { token: reg.body.token });
+    tick();
+    const body = { code: code(setup.body.secret) };
+    const results = await Promise.all([
+      call('POST', '/auth/totp/enable', { token: reg.body.token, body }),
+      call('POST', '/auth/totp/enable', { token: reg.body.token, body }),
+    ]);
+    assert.equal(results.filter(r => r.status === 200).length, 1, JSON.stringify(results.map(r => r.status)));
   });
 
   it('every enroll-scope route is mounted and reachable with an enroll session', async () => {
@@ -414,5 +437,44 @@ describe('API two-factor', () => {
     assert.equal(step.body.mfa_required, true);
     assert.equal((await call('POST', `/users/${mia.id}/totp/reset`, { token: olive.token, body: { code: code(olive.secret) } })).status, 204);
     assert.deepEqual(await mfa(step.body.mfa_token, { code: code(again.secret) }), MFA_STEP_EXPIRED);
+  });
+
+  it('an owner reset clears the day-long code lock, so the user can set up again at once', async () => {
+    const reg = await register('lou');
+    const lou = { id: reg.body.user.id, ...(await enroll(reg.body.token)) };
+    const wrongGuesses = async (count) => {
+      tick();
+      const step = await login('lou');
+      for (let i = 0; i < count; i++) assert.deepEqual(await mfa(step.body.mfa_token, { code: wrongCode(lou.secret, clock) }), INVALID_CODE);
+    };
+    // 7 wrong codes per 16 minutes stay under the short lock; 30 in all reach the day-long lock.
+    for (let round = 0; round < 4; round++) {
+      await wrongGuesses(7);
+      tick(16 * 60);
+    }
+    await wrongGuesses(2);
+    tick(16 * 60);
+    const locked = await login('lou');
+    assert.deepEqual(await mfa(locked.body.mfa_token, { code: code(lou.secret) }), LOCKED);
+
+    tick();
+    assert.equal((await call('POST', `/users/${lou.id}/totp/reset`, { token: olive.token, body: { code: code(olive.secret) } })).status, 204);
+
+    const again = await login('lou');
+    assert.deepEqual(Object.keys(again.body).sort(), ['token', 'user'], 'an enroll session');
+    const setup = await call('POST', '/auth/totp/setup', { token: again.body.token });
+    assert.equal(setup.status, 200);
+    tick();
+    assert.equal((await call('POST', '/auth/totp/enable', { token: again.body.token, body: { code: code(setup.body.secret) } })).status, 200,
+      'the code lock no longer blocks the new factor');
+  });
+
+  it('owner reset: 8 wrong owner proofs lock the reset', async () => {
+    tick(16 * 60);
+    for (let i = 0; i < 8; i++) {
+      assert.deepEqual(await call('POST', `/users/${mia.id}/totp/reset`, { token: olive.token, body: { code: wrongCode(olive.secret, clock) } }),
+        INVALID_CODE, `wrong proof ${i + 1}`);
+    }
+    assert.deepEqual(await call('POST', `/users/${mia.id}/totp/reset`, { token: olive.token, body: { code: code(olive.secret) } }), LOCKED);
   });
 });

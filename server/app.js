@@ -97,7 +97,7 @@ export function createApp({
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
   // The routes an enroll-scope session may reach are listed in logic/two-factor.js ENROLL_SCOPE_ROUTES.
-  app.use('/api/auth/totp', totpRoutes({ authenticate, twoFactor, guard, sessions, requireTotp }));
+  app.use('/api/auth/totp', totpRoutes({ authenticate, twoFactor, guard, sessions, requireTotp, now }));
   app.use('/api/auth', authRoutes({ db, authenticate, verifyGoogle, googleClientId, invites, tokens, twoFactor, lockout, sessions, now }));
   app.use('/api/invites', inviteRoutes({ db, invites, authenticate, lockout, now, publicOrigin }));
   app.use('/api/users', authenticate, userRoutes({ db, twoFactor, guard }));

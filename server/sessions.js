@@ -3,13 +3,14 @@
 // a full session; this file signs the token, maps the user row, and spends
 // each mfa token once (table used_mfa_tokens).
 
-import { signInStep, TOKEN_SCOPES } from '../logic/two-factor.js';
+import { signInStep, isCurrentTokenVersion, TOKEN_SCOPES } from '../logic/two-factor.js';
 import { pick, USER_FIELDS } from './rows.js';
 
 // now: () => Date. requireTotp: whether the server requires a second factor.
 export function makeSessions({ db, tokens, requireTotp, now }) {
   const byId = db.prepare(`SELECT id, name, email, avatar_url, role, timezone, created_at, token_version, totp_enabled_at
     FROM users WHERE id = ?`);
+  const factorState = db.prepare('SELECT token_version, totp_enabled_at FROM users WHERE id = ?');
   const spent = db.prepare('SELECT 1 FROM used_mfa_tokens WHERE jti = ?');
   const pruneSpent = db.prepare('DELETE FROM used_mfa_tokens WHERE expires_at <= ?');
   const spend = db.prepare('INSERT OR IGNORE INTO used_mfa_tokens (jti, expires_at) VALUES (?, ?)');
@@ -40,10 +41,14 @@ export function makeSessions({ db, tokens, requireTotp, now }) {
     isMfaTokenSpent: (claims) => Boolean(spent.get(claims.jti)),
 
     // Spends the mfa token and issues the full session in one transaction.
-    // Spent tokens past their expiry are pruned first: they no longer verify.
-    // claims: verified mfa token claims ({ id, jti, exp }).
-    // Returns { token, user }, or null when the token was already spent.
+    // The token version and the enabled factor are checked again first: a
+    // sign-out everywhere or a reset after the proof ends this sign-in.
+    // Spent tokens past their expiry are pruned: they no longer verify.
+    // claims: verified mfa token claims ({ id, tv, jti, exp }).
+    // Returns { token, user }, or null when refused or already spent.
     completeMfa: db.transaction((claims) => {
+      const row = factorState.get(claims.id);
+      if (!row || !row.totp_enabled_at || !isCurrentTokenVersion(claims, row.token_version)) return null;
       pruneSpent.run(Math.floor(now().getTime() / 1000));
       if (spend.run(claims.jti, claims.exp).changes !== 1) return null;
       return session(byId.get(claims.id), TOKEN_SCOPES.full);

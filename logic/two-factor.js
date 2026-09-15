@@ -69,9 +69,17 @@ export const canDisableTotp = ({ requireTotp }) => !requireTotp;
 // owner proves their own factor to reset another user's.
 export const needsFactorProof = ({ totpEnabled }) => totpEnabled;
 
-// First enrollment keeps the pending secret, so a reload still matches the QR
-// code already scanned. A replace (a factor is enabled) always makes a new one.
-export const shouldReusePendingSecret = ({ totpEnabled, hasPending }) => !totpEnabled && hasPending;
+// How long a first enrollment keeps offering the same pending secret.
+export const PENDING_SECRET_MAX_AGE_MS = 30 * 60 * 1000;
+
+// First enrollment keeps a pending secret younger than PENDING_SECRET_MAX_AGE_MS,
+// so a reload still matches the QR code already scanned; an older one (or one
+// without a creation time) is replaced. A replace (a factor is enabled) always
+// makes a new one. pendingCreatedAtMs: ms or null; nowMs: ms.
+export function shouldReusePendingSecret({ totpEnabled, hasPending, pendingCreatedAtMs, nowMs }) {
+  if (totpEnabled || !hasPending || pendingCreatedAtMs === null || pendingCreatedAtMs === undefined) return false;
+  return nowMs - pendingCreatedAtMs < PENDING_SECRET_MAX_AGE_MS;
+}
 
 // What proves the second factor for the code step, a replace or new backup
 // codes: a current code, or else a backup code (so a user who lost the phone

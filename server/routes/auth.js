@@ -85,6 +85,7 @@ export function authRoutes({ db, authenticate, verifyGoogle, googleClientId, inv
     const stepExpired = () => res.status(401).json({ error: INVALID_MFA_TOKEN });
     if (!state || !state.totpEnabled || !isCurrentTokenVersion(claims, state.tokenVersion)) return stepExpired();
     if (sessions.isMfaTokenSpent(claims)) return stepExpired();
+    // Accepted: two concurrent requests with one mfa token can each spend a proof before one of them completes.
     const outcome = await lockout.attempt(codeKeys(claims.id, req.ip), at, () => twoFactor.useProof(claims.id, proof, at));
     if (outcome === 'locked') return tooManyAttempts(res);
     if (outcome === 'failed') return res.status(401).json({ error: INVALID_CODE });
@@ -95,9 +96,10 @@ export function authRoutes({ db, authenticate, verifyGoogle, googleClientId, inv
 
   r.get('/me', authenticate, (req, res) => res.json(sessions.user(req.user.id)));
 
-  // Raises the token version, so every token issued so far stops working.
+  // Raises the token version, so every token issued so far stops working, and
+  // forgets a pending authenticator setup.
   r.post('/logout-all', authenticate, (req, res) => {
-    twoFactor.bumpTokenVersion(req.user.id);
+    twoFactor.endAllSessions(req.user.id);
     res.status(204).end();
   });
 

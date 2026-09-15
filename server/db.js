@@ -175,6 +175,7 @@ const ADDED_COLUMNS = [
   ['users', 'totp_secret', 'TEXT'],
   ['users', 'totp_pending_secret', 'TEXT'],
   ['users', 'totp_pending_backup_hash', 'TEXT'],
+  ['users', 'totp_pending_created_at', 'TEXT'],
   ['users', 'totp_enabled_at', 'TEXT'],
   ['users', 'totp_last_step', 'INTEGER'],
   ['users', 'token_version', 'INTEGER NOT NULL DEFAULT 0'],

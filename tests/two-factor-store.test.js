@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { openDatabase } from '../server/db.js';
 import { makeTwoFactor, clearTwoFactor } from '../server/two-factor.js';
-import { backupCodePepper } from '../server/totp-crypto.js';
+import { backupCodePepper, generateSecret, codesForSteps } from '../server/totp-crypto.js';
+import { timeStep } from '../logic/totp.js';
 
 const NOW = new Date('2026-09-16T10:00:00.000Z');
 
@@ -30,6 +31,20 @@ describe('makeTwoFactor backup codes', () => {
     assert.equal(other.useBackupCode(userId, codes[0], NOW), false, 'another JWT secret cannot verify it');
     assert.equal(store.useBackupCode(userId, codes[0], NOW), true);
     assert.equal(store.useBackupCode(userId, codes[0], NOW), false, 'single use');
+  });
+
+  it('never accepts a code for a step at or below the stored last step', () => {
+    const store = makeTwoFactor(db, { backupCodePepper: backupCodePepper('secret-one') });
+    const secret = generateSecret();
+    const step = timeStep(NOW.getTime());
+    db.prepare('UPDATE users SET totp_secret = ?, totp_enabled_at = ?, totp_last_step = ? WHERE id = ?')
+      .run(secret, NOW.toISOString(), step + 1, userId);
+    const older = codesForSteps(secret, [step])[0].code;
+    assert.equal(store.useTotp(userId, older, NOW), false);
+    assert.equal(db.prepare('SELECT totp_last_step FROM users WHERE id = ?').get(userId).totp_last_step, step + 1, 'the step is not rewound');
+    const later = new Date(NOW.getTime() + 60_000);
+    assert.equal(store.useTotp(userId, codesForSteps(secret, [step + 2])[0].code, later), true);
+    assert.equal(db.prepare('SELECT totp_last_step FROM users WHERE id = ?').get(userId).totp_last_step, step + 2);
   });
 
   it('needs a pepper', () => {

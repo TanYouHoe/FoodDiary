@@ -12,16 +12,21 @@
 
 import { candidateSteps, timeStep, verifyTotp, otpauthUri, TOTP_ISSUER } from '../logic/totp.js';
 import { normaliseBackupCode } from '../logic/backup-codes.js';
+import { lockoutKeysClearedByReset } from '../logic/lockout.js';
 import { codesForSteps, generateSecret, generateBackupCodes, hashBackupCode } from './totp-crypto.js';
 
-// Removes the user's factor, pending secret and backup codes, and raises the
-// token version so every session ends. The owner reset route and
+// Removes the user's factor, pending secret and backup codes, clears the
+// user's code lockout (logic/lockout.js lockoutKeysClearedByReset), and raises
+// the token version so every session ends. The owner reset route and
 // tools/reset-two-factor.js both use this.
 export function clearTwoFactor(db, userId) {
   db.transaction(() => {
     db.prepare(`UPDATE users SET totp_secret = NULL, totp_pending_secret = NULL, totp_pending_backup_hash = NULL,
-      totp_enabled_at = NULL, totp_last_step = NULL, token_version = token_version + 1 WHERE id = ?`).run(userId);
+      totp_pending_created_at = NULL, totp_enabled_at = NULL, totp_last_step = NULL, token_version = token_version + 1
+      WHERE id = ?`).run(userId);
     db.prepare('DELETE FROM backup_codes WHERE user_id = ?').run(userId);
+    const removeFailures = db.prepare('DELETE FROM auth_failures WHERE key = ?');
+    for (const { key } of lockoutKeysClearedByReset(userId)) removeFailures.run(key);
   })();
 }
 
@@ -29,16 +34,18 @@ export function clearTwoFactor(db, userId) {
 export function makeTwoFactor(db, { backupCodePepper } = {}) {
   if (!backupCodePepper) throw new Error('makeTwoFactor: backupCodePepper is required');
   const factor = db.prepare(`SELECT token_version, totp_secret, totp_pending_secret, totp_pending_backup_hash,
-    totp_enabled_at, totp_last_step FROM users WHERE id = ?`);
-  const setPending = db.prepare('UPDATE users SET totp_pending_secret = ?, totp_pending_backup_hash = ? WHERE id = ?');
-  const clearPending = db.prepare('UPDATE users SET totp_pending_secret = NULL, totp_pending_backup_hash = NULL WHERE id = ?');
+    totp_pending_created_at, totp_enabled_at, totp_last_step FROM users WHERE id = ?`);
+  const setPending = db.prepare(`UPDATE users SET totp_pending_secret = ?, totp_pending_backup_hash = ?,
+    totp_pending_created_at = ? WHERE id = ?`);
+  const clearPending = db.prepare(`UPDATE users SET totp_pending_secret = NULL, totp_pending_backup_hash = NULL,
+    totp_pending_created_at = NULL WHERE id = ?`);
   // The write refuses a step that is not newer than the stored one, next to
   // logic/totp.js isReplay, so two requests can never both spend one step.
   const spendStep = db.prepare('UPDATE users SET totp_last_step = ? WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)');
   // Only the pending secret that was checked is promoted, once.
   const promotePending = db.prepare(`UPDATE users SET totp_secret = totp_pending_secret, totp_pending_secret = NULL,
-    totp_pending_backup_hash = NULL, totp_enabled_at = ?, totp_last_step = ?, token_version = token_version + 1
-    WHERE id = ? AND totp_pending_secret = ?`);
+    totp_pending_backup_hash = NULL, totp_pending_created_at = NULL, totp_enabled_at = ?, totp_last_step = ?,
+    token_version = token_version + 1 WHERE id = ? AND totp_pending_secret = ?`);
   const bumpVersion = db.prepare('UPDATE users SET token_version = token_version + 1 WHERE id = ?');
   const deleteCodes = db.prepare('DELETE FROM backup_codes WHERE user_id = ?');
   const insertCode = db.prepare('INSERT INTO backup_codes (user_id, code_hash) VALUES (?, ?)');
@@ -80,10 +87,16 @@ export function makeTwoFactor(db, { backupCodePepper } = {}) {
   };
 
   return {
-    // { tokenVersion, totpEnabled, hasPending } for a user id, or null.
+    // { tokenVersion, totpEnabled, hasPending, pendingCreatedAtMs } for a user id, or null.
     state(userId) {
       const row = factor.get(userId);
-      return row ? { tokenVersion: row.token_version, totpEnabled: Boolean(row.totp_enabled_at), hasPending: Boolean(row.totp_pending_secret) } : null;
+      if (!row) return null;
+      return {
+        tokenVersion: row.token_version,
+        totpEnabled: Boolean(row.totp_enabled_at),
+        hasPending: Boolean(row.totp_pending_secret),
+        pendingCreatedAtMs: row.totp_pending_created_at ? Date.parse(row.totp_pending_created_at) : null,
+      };
     },
 
     useTotp,
@@ -101,14 +114,19 @@ export function makeTwoFactor(db, { backupCodePepper } = {}) {
       return hashed !== null && unusedCode.get(userId, hashed) ? { ok: true, backupHash: hashed } : { ok: false, backupHash: null };
     },
 
-    // Stores the pending secret; an enabled factor stays as it is.
-    // reusePending: keep an existing pending secret (logic/two-factor.js).
+    // Stores a pending secret; an enabled factor stays as it is.
+    // reusePending: return the existing pending secret unchanged, keeping its
+    // creation time (logic/two-factor.js shouldReusePendingSecret).
     // backupHash: the backup code that authorised this setup, or null.
+    // now: a Date, stored as the creation time of a new pending secret.
     // account: the label in the authenticator app. Returns { secret, otpauth_url }.
-    startSetup(userId, account, { reusePending = false, backupHash = null } = {}) {
+    startSetup(userId, account, { reusePending = false, backupHash = null, now }) {
       const row = factor.get(userId);
-      const secret = reusePending && row?.totp_pending_secret ? row.totp_pending_secret : generateSecret();
-      setPending.run(secret, backupHash, userId);
+      let secret = row?.totp_pending_secret;
+      if (!reusePending || !secret) {
+        secret = generateSecret();
+        setPending.run(secret, backupHash, now.toISOString(), userId);
+      }
       return { secret, otpauth_url: otpauthUri({ secret, issuer: TOTP_ISSUER, account }) };
     },
 
@@ -137,6 +155,10 @@ export function makeTwoFactor(db, { backupCodePepper } = {}) {
 
     clear: (userId) => clearTwoFactor(db, userId),
 
-    bumpTokenVersion: (userId) => { bumpVersion.run(userId); },
+    // Sign out everywhere: raises the token version and forgets a pending setup.
+    endAllSessions: db.transaction((userId) => {
+      bumpVersion.run(userId);
+      clearPending.run(userId);
+    }),
   };
 }

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LOCKOUT_WINDOW_MS, LOCK_DURATION_MS, LONG_LOCKOUT_WINDOW_MS, LONG_LOCK_DURATION_MS, LOCKOUT_LIMITS, accountEmailKey, accountUserKey, ipKey,
-  isLocked, afterFailure, isAnyLocked, reserveAttempts, releaseAttempt, loginKeys, codeKeys, publicKeys, keysClearedBySuccess,
+  isLocked, afterFailure, isAnyLocked, reserveAttempts, releaseAttempt, lockoutKeysClearedByReset, loginKeys, codeKeys, publicKeys, keysClearedBySuccess,
 } from '../logic/lockout.js';
 
 const T0 = 1_800_000_000_000;
@@ -39,6 +39,12 @@ describe('lockout policy', () => {
     assert.deepEqual(publicKeys('1.2.3.4').map(k => k.key), ['ip:1.2.3.4']);
     assert.deepEqual(keysClearedBySuccess(loginKeys('a@x.test', '1.2.3.4')).map(k => k.key), ['account:email:a@x.test']);
     assert.deepEqual(keysClearedBySuccess(publicKeys('1.2.3.4')), []);
+  });
+
+  it('a two-factor reset clears the code keys of that user, not the IP key or the email key', () => {
+    assert.deepEqual(lockoutKeysClearedByReset(7).map(k => k.key), ['account:user:7', 'account-long:user:7']);
+    const codeAccountKeys = codeKeys(7, '1.2.3.4').filter(k => k.kind !== 'ip').map(k => k.key);
+    assert.deepEqual(lockoutKeysClearedByReset(7).map(k => k.key), codeAccountKeys);
   });
 
   it('an account locks on the 8th failure, not the 7th', () => {

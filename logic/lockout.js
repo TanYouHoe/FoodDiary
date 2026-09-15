@@ -34,6 +34,11 @@ export const loginKeys = (email, ip) => [accountEmailKey(email), ipKey(ip)];
 export const codeKeys = (userId, ip) => [accountUserKey(userId), accountUserLongKey(userId), ipKey(ip)];
 export const publicKeys = (ip) => [ipKey(ip)];
 
+// A two-factor reset (owner or console) clears the user's code keys, 15-minute
+// and day-long, so the reset user can set up a new factor at once. The IP key
+// stays: it belongs to the client, not to the user.
+export const lockoutKeysClearedByReset = (userId) => [accountUserKey(userId), accountUserLongKey(userId)];
+
 // A success clears the 15-minute account keys. The IP key and the day-long
 // key only get their reserved failure back, so a user's own sign-ins never
 // wipe the count of a slow guesser.

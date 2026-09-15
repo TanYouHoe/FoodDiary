@@ -111,15 +111,15 @@ All routes are JSON. Every route except the auth endpoints and `/api/health` req
 | `POST` | `/api/auth/login`    | Login `{ email, password }` → `{ token, user }`, or `{ mfa_required: true, mfa_token }` when the account has a second factor. |
 | `POST` | `/api/auth/mfa`      | `{ mfa_token, code }` or `{ mfa_token, backup_code }` → `{ token, user }`. The mfa token lasts 5 minutes. |
 | `GET`  | `/api/auth/me`       | Current user (auth required), with `totp_enabled` and `totp_required`. |
-| `POST` | `/api/auth/logout-all` | Ends every session of the user (204).                 |
+| `POST` | `/api/auth/logout-all` | Ends every session of the user and forgets a pending authenticator setup (204). |
 | `POST` | `/api/auth/google`   | Exchange a Google ID token `{ credential, invite_code? }` → `{ token, user }` (or the code step): 200 for an existing account, 201 for a new one (needs `invite_code`). A token whose email Google has not verified gets 401. |
-| `POST` | `/api/auth/totp/setup` | → `{ secret, otpauth_url }`. Replacing an enabled factor needs `{ code }` or `{ backup_code }`. A first setup returns the same pending secret until it is confirmed or cancelled. |
+| `POST` | `/api/auth/totp/setup` | → `{ secret, otpauth_url }`. Replacing an enabled factor needs `{ code }` or `{ backup_code }`. A first setup returns the same pending secret for 30 minutes, until it is confirmed or cancelled. |
 | `POST` | `/api/auth/totp/cancel` | Forgets the pending secret (204). |
 | `POST` | `/api/auth/totp/enable` | `{ code }` from the new secret → `{ backup_codes, token, user }`. |
 | `POST` | `/api/auth/totp/backup-codes` | `{ code }` → `{ backup_codes }` (a new set of 10). |
 | `POST` | `/api/auth/totp/disable` | `{ code }` → `{ token, user }`. 403 when `REQUIRE_TOTP` is on. |
 | `GET`  | `/api/users`         | Owner. Users with `totp_enabled`.                        |
-| `POST` | `/api/users/:id/totp/reset` | Owner, not self, with the owner's `{ code }` or `{ backup_code }`. Clears that user's factor and backup codes and ends their sessions. |
+| `POST` | `/api/users/:id/totp/reset` | Owner, not self. When the owner has a factor, the owner's own `{ code }` or `{ backup_code }` is required. Clears that user's factor, backup codes and code lockout, and ends their sessions. |
 
 ### Two-factor sign-in
 
@@ -136,7 +136,7 @@ Every account can bind an authenticator app (Google Authenticator, Aegis, 1Passw
   ```
 
   It removes the authenticator and backup codes of that user and ends every session; exit 1 if no user has that email. Like `tools/create-invite.js`, it refuses to run unless the database is named.
-- **Lockout:** 8 failures on one account (password by email, codes by user) or 20 from one IP within 15 minutes lock that key for 15 minutes (429). Codes and backup codes also count per user over a day: 30 failures within 24 hours lock codes for 24 hours. Registration, Google sign-up with an invite and the invite check count by IP only. A success clears the 15-minute account count only.
+- **Lockout:** 8 failures on one account (password by email, codes by user) or 20 from one IP within 15 minutes lock that key for 15 minutes (429). Codes and backup codes also count per user over a day: 30 failures within 24 hours lock codes for 24 hours. That code lock also blocks Google sign-in for the account (it reaches the same code step) and any authenticator change; an owner reset or `tools/reset-two-factor.js` clears it. Registration, Google sign-up with an invite and the invite check count by IP only. A success clears the 15-minute account count only.
 - **Lockout trade-off:** the password lock is per email, whether or not the account exists, so anyone who knows an email can lock that person's password login for 15 minutes. Google sign-in still works for them meanwhile. The same holds for codes once the password is known.
 - **Code step:** an mfa token works once and lasts 5 minutes. A login for an unknown email still runs one bcrypt comparison (against a dummy hash), so timing does not reveal accounts.
 - **Deploy note:** tokens from before this version carry no token version, so every session ends at the first deploy of this version and every user signs in again.
