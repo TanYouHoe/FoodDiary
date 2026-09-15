@@ -14,8 +14,7 @@ import { INVITE_REQUIRED } from '../../logic/invites.js';
 import { loginKeys, codeKeys, publicKeys } from '../../logic/lockout.js';
 import { isCurrentTokenVersion, factorProof, CODE_REQUIRED, INVALID_CODE, INVALID_MFA_TOKEN } from '../../logic/two-factor.js';
 import { tooManyAttempts } from '../lockout-store.js';
-
-const BCRYPT_ROUNDS = 10;
+import { makePasswordCheck, BCRYPT_ROUNDS } from '../passwords.js';
 
 const inviteRequired = (res) => res.status(403).json({ error: INVITE_REQUIRED });
 const emailTaken = (res) => res.status(409).json({ error: EMAIL_TAKEN });
@@ -28,6 +27,7 @@ export function authRoutes({ db, authenticate, verifyGoogle, googleClientId, inv
   const insertUser = db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)');
   const insertGoogleUser = db.prepare('INSERT INTO users (name, email, password_hash, avatar_url, role) VALUES (?, ?, ?, ?, ?)');
   const setAvatar = db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?');
+  const checkPassword = makePasswordCheck();
 
   // Uses the invite and inserts the user in one transaction (server/invites.js).
   // insert: (role) => new user id. Answers 403 or 409, or returns the new user id.
@@ -67,14 +67,14 @@ export function authRoutes({ db, authenticate, verifyGoogle, googleClientId, inv
     let row;
     const outcome = await lockout.attempt(loginKeys(input.value.email, req.ip), now(), async () => {
       row = byEmail.get(input.value.email);
-      return Boolean(row) && bcrypt.compare(input.value.password, row.password_hash);
+      return checkPassword(row, input.value.password);
     });
     if (outcome === 'locked') return tooManyAttempts(res);
     if (outcome === 'failed') return res.status(401).json({ error: 'Invalid credentials' });
     res.json(sessions.afterFirstFactor(row.id));
   });
 
-  // Body { mfa_token, code } or { mfa_token, backup_code }.
+  // Body { mfa_token, code } or { mfa_token, backup_code }. An mfa token works once.
   r.post('/mfa', async (req, res) => {
     const mfaToken = req.body?.mfa_token;
     const proof = factorProof(req.body);
@@ -82,13 +82,15 @@ export function authRoutes({ db, authenticate, verifyGoogle, googleClientId, inv
     const at = now();
     const claims = tokens.verifyMfa(mfaToken, at);
     const state = claims && twoFactor.state(claims.id);
-    if (!state || !state.totpEnabled || !isCurrentTokenVersion(claims, state.tokenVersion)) {
-      return res.status(401).json({ error: INVALID_MFA_TOKEN });
-    }
+    const stepExpired = () => res.status(401).json({ error: INVALID_MFA_TOKEN });
+    if (!state || !state.totpEnabled || !isCurrentTokenVersion(claims, state.tokenVersion)) return stepExpired();
+    if (sessions.isMfaTokenSpent(claims)) return stepExpired();
     const outcome = await lockout.attempt(codeKeys(claims.id, req.ip), at, () => twoFactor.useProof(claims.id, proof, at));
     if (outcome === 'locked') return tooManyAttempts(res);
     if (outcome === 'failed') return res.status(401).json({ error: INVALID_CODE });
-    res.json(sessions.full(claims.id));
+    const signedIn = sessions.completeMfa(claims);
+    if (!signedIn) return stepExpired();
+    res.json(signedIn);
   });
 
   r.get('/me', authenticate, (req, res) => res.json(sessions.user(req.user.id)));

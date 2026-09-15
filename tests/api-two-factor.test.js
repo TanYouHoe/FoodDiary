@@ -12,12 +12,15 @@ import { inviteCode } from './helpers/invites.js';
 import { totpCode, wrongCode } from './helpers/totp.js';
 import { openDatabase } from '../server/db.js';
 import { createApp } from '../server/app.js';
+import { ENROLL_SCOPE_ROUTES } from '../logic/two-factor.js';
 
 const KL = 'Asia/Kuala_Lumpur';
 const ENROLL = { status: 403, body: { error: 'Two-factor setup required', code: 'MFA_ENROLL_REQUIRED' } };
 const EXPIRED = { status: 401, body: { error: 'Session expired' } };
 const INVALID_CODE = { status: 401, body: { error: 'Invalid code' } };
 const MFA_STEP_EXPIRED = { status: 401, body: { error: 'Sign-in step expired. Sign in again.' } };
+const BACKUP_USED_MEANWHILE = { status: 409, body: { error: 'The backup code that started this setup is already used. Start the setup again.' } };
+const CODE_REQUIRED = { status: 400, body: { error: 'Code required' } };
 
 describe('API two-factor', () => {
   let db;
@@ -110,6 +113,31 @@ describe('API two-factor', () => {
     assert.equal((await call('GET', '/auth/me', { token: olive.token })).status, 200);
   });
 
+  it('first enrollment: setup again keeps the scanned secret; cancel clears it', async () => {
+    const reg = await register('sam');
+    const token = reg.body.token;
+    const first = await call('POST', '/auth/totp/setup', { token });
+    const again = await call('POST', '/auth/totp/setup', { token });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.secret, first.body.secret, 'a refresh keeps the QR code valid');
+    assert.equal((await call('POST', '/auth/totp/cancel', { token })).status, 204);
+    assert.equal(db.prepare('SELECT totp_pending_secret FROM users WHERE id = ?').get(reg.body.user.id).totp_pending_secret, null);
+    const third = await call('POST', '/auth/totp/setup', { token });
+    assert.notEqual(third.body.secret, first.body.secret);
+  });
+
+  it('every enroll-scope route is mounted and reachable with an enroll session', async () => {
+    const reg = await register('sid');
+    const routes = [...ENROLL_SCOPE_ROUTES].sort((a, b) => a.endsWith('logout-all') - b.endsWith('logout-all'));
+    for (const route of routes) {
+      const [method, path] = route.split(' ');
+      const r = await call(method, path.replace(/^\/api/, ''), { token: reg.body.token, body: method === 'GET' ? undefined : {} });
+      assert.notEqual(r.status, 404, route);
+      assert.notEqual(r.body?.code, 'MFA_ENROLL_REQUIRED', route);
+      assert.ok(r.status < 500, route);
+    }
+  });
+
   it('enable: a wrong code is refused; the right one returns 10 backup codes and a full session', async () => {
     const setup = await call('POST', '/auth/totp/setup', { token: olive.token });
     assert.equal(setup.status, 200);
@@ -161,6 +189,18 @@ describe('API two-factor', () => {
 
     const again = await login('olive');
     assert.deepEqual(await mfa(again.body.mfa_token, { code: code(olive.secret) }), INVALID_CODE, 'a code is single use');
+
+    tick();
+    assert.deepEqual(await mfa(first.body.mfa_token, { code: code(olive.secret) }), MFA_STEP_EXPIRED, 'an mfa token works once');
+    assert.equal((await mfa(again.body.mfa_token, { code: code(olive.secret) })).status, 200, 'a failed try does not spend the token');
+  });
+
+  it('the same valid code sent twice at once gives exactly one session', async () => {
+    tick();
+    const [a, b] = await Promise.all([login('olive'), login('olive')]);
+    const same = code(olive.secret);
+    const results = await Promise.all([mfa(a.body.mfa_token, { code: same }), mfa(b.body.mfa_token, { code: same })]);
+    assert.deepEqual(results.map(r => r.status).sort(), [200, 401]);
   });
 
   it('the drift window: one step either side works, two steps does not', async () => {
@@ -169,7 +209,8 @@ describe('API two-factor', () => {
     assert.deepEqual(await mfa(first.body.mfa_token, { code: code(olive.secret, 2) }), INVALID_CODE);
     assert.deepEqual(await mfa(first.body.mfa_token, { code: code(olive.secret, -2) }), INVALID_CODE);
     assert.equal((await mfa(first.body.mfa_token, { code: code(olive.secret, -1) })).status, 200);
-    assert.equal((await mfa(first.body.mfa_token, { code: code(olive.secret, 1) })).status, 200);
+    const second = await login('olive');
+    assert.equal((await mfa(second.body.mfa_token, { code: code(olive.secret, 1) })).status, 200);
   });
 
   it('a backup code works once, in any case and spacing', async () => {
@@ -179,8 +220,9 @@ describe('API two-factor', () => {
     const typed = ` ${backup.toUpperCase().replace('-', ' ')} `;
     const r = await mfa(first.body.mfa_token, { backup_code: typed });
     assert.equal(r.status, 200);
-    assert.deepEqual(await mfa(first.body.mfa_token, { backup_code: backup }), INVALID_CODE);
-    assert.deepEqual(await mfa(first.body.mfa_token, { backup_code: 'nope' }), INVALID_CODE);
+    const second = await login('olive');
+    assert.deepEqual(await mfa(second.body.mfa_token, { backup_code: backup }), INVALID_CODE);
+    assert.deepEqual(await mfa(second.body.mfa_token, { backup_code: 'nope' }), INVALID_CODE);
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM backup_codes WHERE user_id = ? AND used_at IS NOT NULL').get(olive.id).c, 1);
   });
 
@@ -196,6 +238,10 @@ describe('API two-factor', () => {
 
   it('logout-all revokes every session of the user', async () => {
     const a = await signIn('olive', olive.secret);
+    const nowSeconds = Math.floor(clock.getTime() / 1000);
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM used_mfa_tokens WHERE expires_at <= ?').get(nowSeconds).c, 0,
+      'spent tokens past their expiry are pruned');
+    assert.ok(db.prepare('SELECT COUNT(*) AS c FROM used_mfa_tokens').get().c >= 1);
     const b = await signIn('olive', olive.secret);
     assert.equal((await call('POST', '/auth/logout-all', { token: a })).status, 204);
     assert.deepEqual(await call('GET', '/auth/me', { token: a }), EXPIRED);
@@ -250,16 +296,27 @@ describe('API two-factor', () => {
     olive.backupCodes = r.body.backup_codes;
   });
 
-  it('a backup code authorises a replace and new backup codes, once each', async () => {
-    const used = olive.backupCodes[1];
-    const setup = await call('POST', '/auth/totp/setup', { token: olive.token, body: { backup_code: used } });
+  it('a backup code starts a replace without being spent; enable fails if it was used meanwhile', async () => {
+    const usedCount = () => db.prepare('SELECT COUNT(*) AS c FROM backup_codes WHERE user_id = ? AND used_at IS NOT NULL').get(olive.id).c;
+    const before = usedCount();
+    const proof = olive.backupCodes[1];
+    const setup = await call('POST', '/auth/totp/setup', { token: olive.token, body: { backup_code: proof } });
     assert.equal(setup.status, 200);
-    assert.deepEqual(await call('POST', '/auth/totp/setup', { token: olive.token, body: { backup_code: used } }), INVALID_CODE,
-      'the backup code is spent');
+    assert.equal(usedCount(), before, 'setup only verifies the backup code');
+
     tick();
-    const enabled = await call('POST', '/auth/totp/enable', { token: olive.token, body: { code: code(setup.body.secret) } });
+    const step = await login('olive');
+    assert.equal((await mfa(step.body.mfa_token, { backup_code: proof })).status, 200, 'the code is used elsewhere meanwhile');
+    tick();
+    assert.deepEqual(await call('POST', '/auth/totp/enable', { token: olive.token, body: { code: code(setup.body.secret) } }), BACKUP_USED_MEANWHILE);
+
+    const retry = await call('POST', '/auth/totp/setup', { token: olive.token, body: { backup_code: olive.backupCodes[2] } });
+    assert.equal(retry.status, 200);
+    tick();
+    const enabled = await call('POST', '/auth/totp/enable', { token: olive.token, body: { code: code(retry.body.secret) } });
     assert.equal(enabled.status, 200);
-    olive = { ...olive, secret: setup.body.secret, token: enabled.body.token, backupCodes: enabled.body.backup_codes };
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM backup_codes WHERE user_id = ? AND used_at IS NULL').get(olive.id).c, 10);
+    olive = { ...olive, secret: retry.body.secret, token: enabled.body.token, backupCodes: enabled.body.backup_codes };
 
     const regenerated = await call('POST', '/auth/totp/backup-codes', { token: olive.token, body: { backup_code: olive.backupCodes[0] } });
     assert.equal(regenerated.status, 200);
@@ -283,7 +340,8 @@ describe('API two-factor', () => {
     const list = await call('GET', '/users', { token: olive.token });
     assert.equal(list.status, 200);
     for (const user of list.body) assert.deepEqual(Object.keys(user).sort(), ['created_at', 'email', 'id', 'name', 'role', 'totp_enabled']);
-    assert.deepEqual(list.body.map(u => [u.email, u.totp_enabled]), [['olive@tf.test', true], ['mia@tf.test', true]]);
+    assert.deepEqual(list.body.filter(u => ['olive@tf.test', 'mia@tf.test'].includes(u.email)).map(u => [u.email, u.totp_enabled]),
+      [['olive@tf.test', true], ['mia@tf.test', true]]);
 
     assert.deepEqual(await call('GET', '/users', { token: mia.token }), { status: 403, body: { error: 'Not allowed' } });
     assert.deepEqual(await call('POST', `/users/${olive.id}/totp/reset`, { token: mia.token }), { status: 403, body: { error: 'Not allowed' } });
@@ -291,7 +349,13 @@ describe('API two-factor', () => {
       { status: 403, body: { error: 'Replace your own authenticator in Security settings' } });
     assert.deepEqual(await call('POST', '/users/9999/totp/reset', { token: olive.token }), { status: 404, body: { error: 'Not found' } });
 
-    assert.equal((await call('POST', `/users/${mia.id}/totp/reset`, { token: olive.token })).status, 204);
+    assert.deepEqual(await call('POST', `/users/${mia.id}/totp/reset`, { token: olive.token }), CODE_REQUIRED,
+      'the owner proves their own factor');
+    tick();
+    assert.deepEqual(await call('POST', `/users/${mia.id}/totp/reset`, { token: olive.token, body: { code: wrongCode(olive.secret, clock) } }),
+      INVALID_CODE);
+    assert.equal(db.prepare('SELECT totp_enabled_at IS NOT NULL AS on_ FROM users WHERE id = ?').get(mia.id).on_, 1, 'nothing reset yet');
+    assert.equal((await call('POST', `/users/${mia.id}/totp/reset`, { token: olive.token, body: { code: code(olive.secret) } })).status, 204);
     assert.deepEqual(await call('GET', '/auth/me', { token: mia.token }), EXPIRED);
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM backup_codes WHERE user_id = ?').get(mia.id).c, 0);
     const row = db.prepare('SELECT totp_secret, totp_pending_secret, totp_enabled_at, totp_last_step FROM users WHERE id = ?').get(mia.id);
@@ -348,7 +412,7 @@ describe('API two-factor', () => {
     tick();
     const step = await login('mia');
     assert.equal(step.body.mfa_required, true);
-    assert.equal((await call('POST', `/users/${mia.id}/totp/reset`, { token: olive.token })).status, 204);
+    assert.equal((await call('POST', `/users/${mia.id}/totp/reset`, { token: olive.token, body: { code: code(olive.secret) } })).status, 204);
     assert.deepEqual(await mfa(step.body.mfa_token, { code: code(again.secret) }), MFA_STEP_EXPIRED);
   });
 });

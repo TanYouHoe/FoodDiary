@@ -121,6 +121,11 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS backup_codes_user ON backup_codes(user_id);
 
+  CREATE TABLE IF NOT EXISTS used_mfa_tokens (
+    jti TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS auth_failures (
     key TEXT PRIMARY KEY,
     count INTEGER NOT NULL,
@@ -169,6 +174,7 @@ const ADDED_COLUMNS = [
   ['users', 'timezone_updated_at', 'TEXT'],
   ['users', 'totp_secret', 'TEXT'],
   ['users', 'totp_pending_secret', 'TEXT'],
+  ['users', 'totp_pending_backup_hash', 'TEXT'],
   ['users', 'totp_enabled_at', 'TEXT'],
   ['users', 'totp_last_step', 'INTEGER'],
   ['users', 'token_version', 'INTEGER NOT NULL DEFAULT 0'],

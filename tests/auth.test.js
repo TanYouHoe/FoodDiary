@@ -80,6 +80,13 @@ describe('makeTokens', () => {
     assert.equal(tokens.verifyMfa(tokens.signSession({ userId: 1, tokenVersion: 0, scope: 'full' }, NOW), NOW), null);
   });
 
+  it('each mfa token has its own jti', () => {
+    const a = tokens.verifyMfa(tokens.signMfa({ userId: 1, tokenVersion: 0 }, NOW), NOW);
+    const b = tokens.verifyMfa(tokens.signMfa({ userId: 1, tokenVersion: 0 }, NOW), NOW);
+    assert.equal(typeof a.jti, 'string');
+    assert.notEqual(a.jti, b.jti);
+  });
+
   it('another secret or garbage is refused', () => {
     assert.equal(tokens.verifySession(makeTokens('other').signSession({ userId: 1, tokenVersion: 0, scope: 'full' }, NOW), NOW), null);
     assert.equal(tokens.verifySession('garbage', NOW), null);

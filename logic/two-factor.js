@@ -17,12 +17,17 @@ export const INVALID_MFA_TOKEN = 'Sign-in step expired. Sign in again.';
 export const NO_PENDING_SETUP = 'Start the authenticator setup first';
 export const FACTOR_NOT_ENABLED = 'Two-factor authentication is not on';
 export const FACTOR_REQUIRED = 'Two-factor authentication is required on this server';
+export const BACKUP_CODE_USED_MEANWHILE = 'The backup code that started this setup is already used. Start the setup again.';
 
 // An enroll-scope session reaches only these routes ('METHOD /path').
+// Keep in sync with the route mounts in server/app.js and the paths in
+// server/routes/auth.js and server/routes/totp.js; tests/api-two-factor.test.js
+// calls each one and fails when a path is not mounted.
 export const ENROLL_SCOPE_ROUTES = [
   'GET /api/auth/me',
   'POST /api/auth/totp/setup',
   'POST /api/auth/totp/enable',
+  'POST /api/auth/totp/cancel',
   'POST /api/auth/logout-all',
 ];
 
@@ -46,9 +51,11 @@ export function scopeAllows(scope, method, path) {
 }
 
 // claims: a verified token payload. A token of another type, or one without a
-// user id or a token version, is refused.
+// user id or a token version, is refused. An mfa token also needs a jti, the
+// id it is spent under, so it works only once.
 export function isTokenOfType(claims, type) {
-  return Boolean(claims) && claims.typ === type && Number.isSafeInteger(claims.id) && Number.isInteger(claims.tv);
+  return Boolean(claims) && claims.typ === type && Number.isSafeInteger(claims.id) && Number.isInteger(claims.tv)
+    && (type !== TOKEN_TYPES.mfa || (typeof claims.jti === 'string' && claims.jti.length > 0));
 }
 
 export function isCurrentTokenVersion(claims, tokenVersion) {
@@ -58,8 +65,13 @@ export function isCurrentTokenVersion(claims, tokenVersion) {
 // A server that requires the factor never lets a user remove it.
 export const canDisableTotp = ({ requireTotp }) => !requireTotp;
 
-// Replacing an enabled factor needs a current code from it.
-export const setupNeedsCurrentCode = ({ totpEnabled }) => totpEnabled;
+// A user with an enabled factor proves it (factorProof) to replace it, and an
+// owner proves their own factor to reset another user's.
+export const needsFactorProof = ({ totpEnabled }) => totpEnabled;
+
+// First enrollment keeps the pending secret, so a reload still matches the QR
+// code already scanned. A replace (a factor is enabled) always makes a new one.
+export const shouldReusePendingSecret = ({ totpEnabled, hasPending }) => !totpEnabled && hasPending;
 
 // What proves the second factor for the code step, a replace or new backup
 // codes: a current code, or else a backup code (so a user who lost the phone

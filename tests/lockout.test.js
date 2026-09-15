@@ -2,7 +2,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LOCKOUT_WINDOW_MS, LOCK_DURATION_MS, LOCKOUT_LIMITS, accountEmailKey, accountUserKey, ipKey,
+  LOCKOUT_WINDOW_MS, LOCK_DURATION_MS, LONG_LOCKOUT_WINDOW_MS, LONG_LOCK_DURATION_MS, LOCKOUT_LIMITS, accountEmailKey, accountUserKey, ipKey,
   isLocked, afterFailure, isAnyLocked, reserveAttempts, releaseAttempt, loginKeys, codeKeys, publicKeys, keysClearedBySuccess,
 } from '../logic/lockout.js';
 
@@ -18,7 +18,9 @@ const fail = (n, kind, start = T0, entry = null) => {
 
 describe('lockout policy', () => {
   it('limits: 8 per account, 20 per IP, 15-minute window and lock', () => {
-    assert.deepEqual(LOCKOUT_LIMITS, { account: 8, ip: 20 });
+    assert.deepEqual(LOCKOUT_LIMITS, { account: 8, ip: 20, accountLong: 30 });
+    assert.equal(LONG_LOCKOUT_WINDOW_MS, 24 * 60 * MIN);
+    assert.equal(LONG_LOCK_DURATION_MS, 24 * 60 * MIN);
     assert.equal(LOCKOUT_WINDOW_MS, 15 * MIN);
     assert.equal(LOCK_DURATION_MS, 15 * MIN);
   });
@@ -31,7 +33,9 @@ describe('lockout policy', () => {
 
   it('which keys each attempt counts, and which a success clears', () => {
     assert.deepEqual(loginKeys('A@x.test', '1.2.3.4').map(k => k.key), ['account:email:a@x.test', 'ip:1.2.3.4']);
-    assert.deepEqual(codeKeys(3, '1.2.3.4').map(k => k.key), ['account:user:3', 'ip:1.2.3.4']);
+    assert.deepEqual(codeKeys(3, '1.2.3.4').map(k => k.key), ['account:user:3', 'account-long:user:3', 'ip:1.2.3.4']);
+    assert.deepEqual(keysClearedBySuccess(codeKeys(3, '1.2.3.4')).map(k => k.key), ['account:user:3'],
+      'a success never clears the day-long code count');
     assert.deepEqual(publicKeys('1.2.3.4').map(k => k.key), ['ip:1.2.3.4']);
     assert.deepEqual(keysClearedBySuccess(loginKeys('a@x.test', '1.2.3.4')).map(k => k.key), ['account:email:a@x.test']);
     assert.deepEqual(keysClearedBySuccess(publicKeys('1.2.3.4')), []);
@@ -44,6 +48,25 @@ describe('lockout policy', () => {
     const eight = afterFailure(seven, T0 + 7000, 'account');
     assert.equal(isLocked(eight, T0 + 7000), true);
     assert.equal(eight.lockedUntil, T0 + 7000 + LOCK_DURATION_MS);
+  });
+
+  it('slow code guessing: 30 failures within a day lock the account for a day', () => {
+    // One failure every 20 minutes never trips the 15-minute rule.
+    let entry = null;
+    for (let i = 0; i < 29; i++) entry = afterFailure(entry, T0 + i * 20 * MIN, 'accountLong');
+    assert.equal(entry.count, 29);
+    assert.equal(isLocked(entry, T0 + 29 * 20 * MIN), false);
+    const thirtieth = afterFailure(entry, T0 + 29 * 20 * MIN, 'accountLong');
+    assert.equal(thirtieth.lockedUntil, T0 + 29 * 20 * MIN + LONG_LOCK_DURATION_MS);
+    assert.equal(isLocked(thirtieth, T0 + 29 * 20 * MIN + LONG_LOCK_DURATION_MS - 1), true);
+    assert.equal(isLocked(thirtieth, T0 + 29 * 20 * MIN + LONG_LOCK_DURATION_MS), false);
+  });
+
+  it('the day-long count starts again after 24 hours', () => {
+    let entry = null;
+    for (let i = 0; i < 29; i++) entry = afterFailure(entry, T0 + i * MIN, 'accountLong');
+    assert.deepEqual(afterFailure(entry, T0 + LONG_LOCKOUT_WINDOW_MS, 'accountLong'),
+      { count: 1, windowStart: T0 + LONG_LOCKOUT_WINDOW_MS, lockedUntil: null });
   });
 
   it('an IP locks on the 20th failure', () => {

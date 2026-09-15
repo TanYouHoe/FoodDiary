@@ -48,6 +48,8 @@ export function makeLockout(db) {
   return {
     // keys: from logic/lockout.js (loginKeys, codeKeys, publicKeys). now: a Date.
     // check: () => boolean or Promise<boolean>, run only when no key is locked.
+    // A check must not throw on user input: return false for a bad value. A
+    // throw gives the reservation back, so a guess that throws would not count.
     // The failure is counted before check runs and given back when it passes.
     // Returns 'locked', 'failed' or 'ok'.
     async attempt(keys, now, check) {

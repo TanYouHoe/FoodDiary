@@ -109,6 +109,42 @@ describe('API lockout', () => {
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM backup_codes WHERE used_at IS NOT NULL').get().c, 0, 'the backup code was not spent');
   });
 
+  it('mfa: 30 wrong codes within a day lock the account for a day, even spread over short windows', async () => {
+    const reg = await call('POST', '/auth/register', {
+      body: { name: 'Slow', email: 'slow@lock.test', password: 'right', invite_code: inviteCode(db, { now: clock }) },
+    });
+    const setup = await call('POST', '/auth/totp/setup', { token: reg.body.token });
+    const secret = setup.body.secret;
+    assert.equal((await call('POST', '/auth/totp/enable', { token: reg.body.token, body: { code: totpCode(secret, clock) } })).status, 200);
+
+    const stepToken = async () => {
+      const r = await login('slow@lock.test', 'right');
+      assert.equal(r.body.mfa_required, true);
+      return r.body.mfa_token;
+    };
+    const guess = async (token) => call('POST', '/auth/mfa', { body: { mfa_token: token, code: wrongCode(secret, clock) } });
+
+    // Four rounds of 7 wrong codes, 16 minutes apart: the 15-minute rule never locks.
+    for (let round = 0; round < 4; round++) {
+      minutes(1);
+      const token = await stepToken();
+      for (let i = 0; i < 7; i++) assert.equal((await guess(token)).status, 401, `round ${round + 1}, guess ${i + 1}`);
+      minutes(16);
+    }
+    const token = await stepToken();
+    assert.equal((await guess(token)).status, 401, 'failure 29');
+    assert.equal((await guess(token)).status, 401, 'failure 30');
+
+    minutes(16);
+    const later = await stepToken();
+    assert.deepEqual(await call('POST', '/auth/mfa', { body: { mfa_token: later, code: totpCode(secret, clock) } }), LOCKED,
+      'still locked after the short lock would have ended');
+
+    minutes(24 * 60);
+    const nextDay = await stepToken();
+    assert.equal((await call('POST', '/auth/mfa', { body: { mfa_token: nextDay, code: totpCode(secret, clock) } })).status, 200);
+  });
+
   it('register: 20 refused invites lock the IP', async () => {
     const body = (invite_code) => ({ name: 'X', email: 'x@lock.test', password: 'pw', invite_code });
     for (let i = 0; i < 20; i++) assert.equal((await call('POST', '/auth/register', { body: body('bad') })).status, 403);

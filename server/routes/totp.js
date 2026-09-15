@@ -1,60 +1,63 @@
 // Connector: the signed-in user's authenticator app. Set up (or replace),
-// confirm, regenerate backup codes, and remove when the server allows it.
-// The rules are logic/two-factor.js; the store is server/two-factor.js; every
-// code checked here counts toward logic/lockout.js.
+// cancel a setup, confirm, regenerate backup codes, and remove when the server
+// allows it. The rules are logic/two-factor.js; the store is
+// server/two-factor.js; every code checked here counts toward logic/lockout.js
+// (server/factor-guard.js).
 
 import { Router } from 'express';
 import {
-  setupNeedsCurrentCode, canDisableTotp, factorProof,
-  CODE_REQUIRED, INVALID_CODE, NO_PENDING_SETUP, FACTOR_NOT_ENABLED, FACTOR_REQUIRED,
+  needsFactorProof, shouldReusePendingSecret, canDisableTotp, factorProof,
+  CODE_REQUIRED, NO_PENDING_SETUP, FACTOR_NOT_ENABLED, FACTOR_REQUIRED, BACKUP_CODE_USED_MEANWHILE,
 } from '../../logic/two-factor.js';
-import { codeKeys } from '../../logic/lockout.js';
-import { tooManyAttempts } from '../lockout-store.js';
 import { badRequest, notAllowed } from '../guards.js';
 
-// Mounted at /api/auth/totp. now: () => Date.
-export function totpRoutes({ authenticate, twoFactor, lockout, sessions, requireTotp, now }) {
+// Mounted at /api/auth/totp. guard: server/factor-guard.js.
+export function totpRoutes({ authenticate, twoFactor, guard, sessions, requireTotp }) {
   const r = Router();
   r.use(authenticate);
 
-  // Runs check(at) under the lockout when `given` is truthy. Answers 400, 401
-  // or 429 and returns false, or returns true.
-  const underLockout = async (req, res, given, check) => {
-    if (!given) { badRequest(res, CODE_REQUIRED); return false; }
-    const at = now();
-    const outcome = await lockout.attempt(codeKeys(req.user.id, req.ip), at, () => check(at));
-    if (outcome === 'locked') tooManyAttempts(res);
-    else if (outcome === 'failed') res.status(401).json({ error: INVALID_CODE });
-    return outcome === 'ok';
-  };
-
-  // { code } or { backup_code } for the enabled factor; either is spent.
-  const currentFactor = (req, res) => {
-    const proof = factorProof(req.body);
-    return underLockout(req, res, proof, (at) => twoFactor.useProof(req.user.id, proof, at));
-  };
-
-  // { secret, otpauth_url }. Replacing an enabled factor needs { code } or { backup_code }.
+  // { secret, otpauth_url }. Replacing an enabled factor needs { code } (spent)
+  // or { backup_code } (checked now, spent by enable). A first enrollment gets
+  // the same pending secret again until it is confirmed or cancelled.
   r.post('/setup', async (req, res) => {
-    if (setupNeedsCurrentCode({ totpEnabled: req.auth.totpEnabled }) && !(await currentFactor(req, res))) return;
-    res.json(twoFactor.startSetup(req.user.id, req.user.email));
+    const { totpEnabled } = req.auth;
+    let backupHash = null;
+    if (needsFactorProof({ totpEnabled })) {
+      const proof = factorProof(req.body);
+      let verified = null;
+      const ok = await guard.underLockout(req, res, proof, (at) => (verified = twoFactor.verifyProof(req.user.id, proof, at)).ok);
+      if (!ok) return;
+      backupHash = verified.backupHash;
+    }
+    const reusePending = shouldReusePendingSecret({ totpEnabled, hasPending: twoFactor.state(req.user.id).hasPending });
+    res.json(twoFactor.startSetup(req.user.id, req.user.email, { reusePending, backupHash }));
+  });
+
+  // Forgets the pending secret; an enabled factor stays as it is.
+  r.post('/cancel', (req, res) => {
+    twoFactor.cancelSetup(req.user.id);
+    res.status(204).end();
   });
 
   // { code } from the pending secret → { backup_codes, token, user }. The codes
-  // are shown only here; the old tokens stop working.
+  // are shown only here; the old tokens stop working. 409 when the backup code
+  // that authorised the setup was used meanwhile.
   r.post('/enable', async (req, res) => {
     const code = req.body?.code;
     if (!code) return badRequest(res, CODE_REQUIRED);
     if (!twoFactor.state(req.user.id).hasPending) return badRequest(res, NO_PENDING_SETUP);
-    let backupCodes = null;
-    const ok = await underLockout(req, res, code, (at) => (backupCodes = twoFactor.enable(req.user.id, code, at)) !== null);
-    if (ok) res.json({ backup_codes: backupCodes, ...sessions.full(req.user.id) });
+    let result = null;
+    // A right code counts as a success for the lockout, even when the backup code behind the setup is gone.
+    const ok = await guard.underLockout(req, res, code, (at) => (result = twoFactor.enable(req.user.id, code, at)).reason !== 'code');
+    if (!ok) return;
+    if (!result.ok) return res.status(409).json({ error: BACKUP_CODE_USED_MEANWHILE });
+    res.json({ backup_codes: result.backupCodes, ...sessions.full(req.user.id) });
   });
 
   // { code } or { backup_code } → { backup_codes }. The old backup codes stop working.
   r.post('/backup-codes', async (req, res) => {
     if (!req.auth.totpEnabled) return badRequest(res, FACTOR_NOT_ENABLED);
-    if (!(await currentFactor(req, res))) return;
+    if (!(await guard.requireCurrentFactor(req, res))) return;
     res.json({ backup_codes: twoFactor.regenerateBackupCodes(req.user.id) });
   });
 
@@ -63,7 +66,7 @@ export function totpRoutes({ authenticate, twoFactor, lockout, sessions, require
     if (!canDisableTotp({ requireTotp })) return notAllowed(res, FACTOR_REQUIRED);
     if (!req.auth.totpEnabled) return badRequest(res, FACTOR_NOT_ENABLED);
     const code = req.body?.code;
-    if (!(await underLockout(req, res, code, (at) => twoFactor.useTotp(req.user.id, code, at)))) return;
+    if (!(await guard.underLockout(req, res, code, (at) => twoFactor.useTotp(req.user.id, code, at)))) return;
     twoFactor.clear(req.user.id);
     res.json(sessions.full(req.user.id));
   });

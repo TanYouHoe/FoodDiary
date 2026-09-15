@@ -6,6 +6,7 @@
 // Note: authenticate can write the user's stored time zone on any
 // authenticated request, from the X-Time-Zone header.
 
+import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { SESSION_TTL_SECONDS } from '../logic/accounts.js';
 import {
@@ -37,8 +38,9 @@ export function makeTokens(secret) {
   return {
     signSession: ({ userId, tokenVersion, scope }, now) =>
       sign({ typ: TOKEN_TYPES.session, id: userId, tv: tokenVersion, scope }, now, SESSION_TTL_SECONDS),
+    // jti: the id the token is spent under (server/sessions.js completeMfa).
     signMfa: ({ userId, tokenVersion }, now) =>
-      sign({ typ: TOKEN_TYPES.mfa, id: userId, tv: tokenVersion }, now, MFA_TOKEN_TTL_SECONDS),
+      sign({ typ: TOKEN_TYPES.mfa, id: userId, tv: tokenVersion, jti: crypto.randomUUID() }, now, MFA_TOKEN_TTL_SECONDS),
     verifySession: (token, now) => verify(token, now, TOKEN_TYPES.session),
     verifyMfa: (token, now) => verify(token, now, TOKEN_TYPES.mfa),
   };

@@ -15,6 +15,7 @@ import { makeLockout } from './lockout-store.js';
 import { makeTwoFactor } from './two-factor.js';
 import { backupCodePepper } from './totp-crypto.js';
 import { makeSessions } from './sessions.js';
+import { makeFactorGuard } from './factor-guard.js';
 import { authRoutes } from './routes/auth.js';
 import { totpRoutes } from './routes/totp.js';
 import { userRoutes } from './routes/users.js';
@@ -49,6 +50,7 @@ export function createApp({
   const lockout = makeLockout(db);
   const twoFactor = makeTwoFactor(db, { backupCodePepper: backupCodePepper(jwtSecret) });
   const sessions = makeSessions({ db, tokens, requireTotp, now });
+  const guard = makeFactorGuard({ lockout, twoFactor, now });
 
   // The profile is derived data. A failed rebuild must not fail the meal change.
   // It is read in the user's stored zone, else the default zone.
@@ -70,10 +72,11 @@ export function createApp({
 
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-  app.use('/api/auth/totp', totpRoutes({ authenticate, twoFactor, lockout, sessions, requireTotp, now }));
+  // The routes an enroll-scope session may reach are listed in logic/two-factor.js ENROLL_SCOPE_ROUTES.
+  app.use('/api/auth/totp', totpRoutes({ authenticate, twoFactor, guard, sessions, requireTotp }));
   app.use('/api/auth', authRoutes({ db, authenticate, verifyGoogle, googleClientId, invites, tokens, twoFactor, lockout, sessions, now }));
   app.use('/api/invites', inviteRoutes({ db, invites, authenticate, lockout, now, publicOrigin }));
-  app.use('/api/users', authenticate, userRoutes({ db, twoFactor }));
+  app.use('/api/users', authenticate, userRoutes({ db, twoFactor, guard }));
   app.use('/api/restaurants', authenticate, restaurantRoutes({ db, upload, uploadsDir, refreshProfile }));
   app.use('/api/meal-types', authenticate, mealTypeRoutes({ db }));
   app.use('/api/dish-types', authenticate, dishTypeRoutes({ db }));

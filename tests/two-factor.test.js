@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   signInStep, effectiveScope, scopeAllows, isTokenOfType, isCurrentTokenVersion, canDisableTotp,
-  setupNeedsCurrentCode, factorProof, TOKEN_SCOPES, TOKEN_TYPES, ENROLL_SCOPE_ROUTES, MFA_TOKEN_TTL_SECONDS,
+  needsFactorProof, shouldReusePendingSecret, factorProof, TOKEN_SCOPES, TOKEN_TYPES, ENROLL_SCOPE_ROUTES, MFA_TOKEN_TTL_SECONDS,
 } from '../logic/two-factor.js';
 import { canListUsers, totpResetRefusal, NOT_ALLOWED, OWN_FACTOR_RESET } from '../logic/access.js';
 import { shouldRequireTotp, checkServerConfig } from '../logic/config.js';
@@ -33,9 +33,10 @@ describe('token scope', () => {
     assert.equal(effectiveScope({ tokenScope: 'enroll', totpEnabled: true, requireTotp: false }), TOKEN_SCOPES.enroll);
     assert.equal(effectiveScope({ tokenScope: undefined, totpEnabled: true, requireTotp: false }), TOKEN_SCOPES.enroll);
   });
-  it('enroll reaches exactly four routes', () => {
+  it('enroll reaches exactly five routes', () => {
     assert.deepEqual(ENROLL_SCOPE_ROUTES, [
-      'GET /api/auth/me', 'POST /api/auth/totp/setup', 'POST /api/auth/totp/enable', 'POST /api/auth/logout-all',
+      'GET /api/auth/me', 'POST /api/auth/totp/setup', 'POST /api/auth/totp/enable', 'POST /api/auth/totp/cancel',
+      'POST /api/auth/logout-all',
     ]);
     for (const route of ENROLL_SCOPE_ROUTES) {
       const [method, path] = route.split(' ');
@@ -50,6 +51,8 @@ describe('token scope', () => {
     assert.equal(isTokenOfType({ typ: 'session', id: 1, tv: 0 }, TOKEN_TYPES.session), true);
     assert.equal(isTokenOfType({ typ: 'mfa', id: 1, tv: 0 }, TOKEN_TYPES.session), false);
     assert.equal(isTokenOfType({ typ: 'session', id: 1, tv: 0 }, TOKEN_TYPES.mfa), false);
+    assert.equal(isTokenOfType({ typ: 'mfa', id: 1, tv: 0, jti: 'a' }, TOKEN_TYPES.mfa), true);
+    assert.equal(isTokenOfType({ typ: 'mfa', id: 1, tv: 0 }, TOKEN_TYPES.mfa), false, 'an mfa token needs a jti to be spent once');
     assert.equal(isTokenOfType({ id: 1 }, TOKEN_TYPES.session), false, 'a token from before versions');
     assert.equal(isTokenOfType(null, TOKEN_TYPES.session), false);
   });
@@ -77,9 +80,14 @@ describe('factor changes', () => {
     assert.equal(canDisableTotp({ requireTotp: true }), false);
     assert.equal(canDisableTotp({ requireTotp: false }), true);
   });
-  it('replacing an enabled factor needs a current code', () => {
-    assert.equal(setupNeedsCurrentCode({ totpEnabled: true }), true);
-    assert.equal(setupNeedsCurrentCode({ totpEnabled: false }), false);
+  it('a user with a factor proves it (code or backup code) to replace it or reset another user', () => {
+    assert.equal(needsFactorProof({ totpEnabled: true }), true);
+    assert.equal(needsFactorProof({ totpEnabled: false }), false);
+  });
+  it('first enrollment keeps the pending secret; a replace always makes a new one', () => {
+    assert.equal(shouldReusePendingSecret({ totpEnabled: false, hasPending: true }), true);
+    assert.equal(shouldReusePendingSecret({ totpEnabled: false, hasPending: false }), false);
+    assert.equal(shouldReusePendingSecret({ totpEnabled: true, hasPending: true }), false);
   });
 });
 
