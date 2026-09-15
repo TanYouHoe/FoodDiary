@@ -1,8 +1,9 @@
-const API = '/api';
+// Connector: the browser's only HTTP client. Knows every URL and header, and
+// maps response bodies into the shapes the screens use.
 
-function getToken() {
-  return localStorage.getItem('token');
-}
+import { getToken } from './token-store.js';
+
+const API = '/api';
 
 async function request(url, options = {}) {
   const token = getToken();
@@ -21,90 +22,86 @@ async function request(url, options = {}) {
   return res.json();
 }
 
+const send = (method, url, data) => request(url, { method, body: JSON.stringify(data) });
+
+function query(params = {}) {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => { if (v) qs.set(k, v); });
+  const q = qs.toString();
+  return q ? `?${q}` : '';
+}
+
+function uploadForm(url, form) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getToken()}` },
+    body: form,
+  }).then(r => r.json());
+}
+
+// A meal's photo list travels as a JSON string.
+function parsePhotoUrls(value) {
+  try { return value ? JSON.parse(value) : []; } catch { return []; }
+}
+
+const toMeal = ({ photo_urls, ...meal }) => ({ ...meal, photos: parsePhotoUrls(photo_urls) });
+
 export const api = {
   // Auth
-  register: (data) => request(`${API}/auth/register`, { method: 'POST', body: JSON.stringify(data) }),
-  login: (data) => request(`${API}/auth/login`, { method: 'POST', body: JSON.stringify(data) }),
-  googleLogin: (credential) => request(`${API}/auth/google`, { method: 'POST', body: JSON.stringify({ credential }) }),
+  register: (data) => send('POST', `${API}/auth/register`, data),
+  login: (data) => send('POST', `${API}/auth/login`, data),
+  googleLogin: (credential) => send('POST', `${API}/auth/google`, { credential }),
   getMe: () => request(`${API}/auth/me`),
 
   // Meal Types
-  getMealTypes: (params = {}) => {
-    const qs = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => { if (v) qs.set(k, v); });
-    const query = qs.toString();
-    return request(`${API}/meal-types${query ? '?' + query : ''}`);
-  },
-  createMealType: (data) => request(`${API}/meal-types`, { method: 'POST', body: JSON.stringify(data) }),
-  updateMealType: (id, data) => request(`${API}/meal-types/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getMealTypes: (params) => request(`${API}/meal-types${query(params)}`),
+  createMealType: (data) => send('POST', `${API}/meal-types`, data),
+  updateMealType: (id, data) => send('PUT', `${API}/meal-types/${id}`, data),
   deleteMealType: (id) => request(`${API}/meal-types/${id}`, { method: 'DELETE' }),
 
   // Dish Types
   getDishTypes: () => request(`${API}/dish-types`),
-  createDishType: (data) => request(`${API}/dish-types`, { method: 'POST', body: JSON.stringify(data) }),
-  updateDishType: (id, data) => request(`${API}/dish-types/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  createDishType: (data) => send('POST', `${API}/dish-types`, data),
+  updateDishType: (id, data) => send('PUT', `${API}/dish-types/${id}`, data),
   deleteDishType: (id) => request(`${API}/dish-types/${id}`, { method: 'DELETE' }),
 
   // Restaurants
-  getRestaurants: (params = {}) => {
-    const qs = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => { if (v) qs.set(k, v); });
-    const query = qs.toString();
-    return request(`${API}/restaurants${query ? '?' + query : ''}`);
-  },
-  createRestaurant: (data) => request(`${API}/restaurants`, { method: 'POST', body: JSON.stringify(data) }),
-  updateRestaurant: (id, data) => request(`${API}/restaurants/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getRestaurants: (params) => request(`${API}/restaurants${query(params)}`),
+  createRestaurant: (data) => send('POST', `${API}/restaurants`, data),
+  updateRestaurant: (id, data) => send('PUT', `${API}/restaurants/${id}`, data),
   uploadRestaurantPhoto: (id, file) => {
     const form = new FormData();
     form.append('photo', file);
-    return fetch(`${API}/restaurants/${id}/photo`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${getToken()}` },
-      body: form,
-    }).then(r => r.json());
+    return uploadForm(`${API}/restaurants/${id}/photo`, form);
   },
   deleteRestaurant: (id) => request(`${API}/restaurants/${id}`, { method: 'DELETE' }),
 
   // Meals
-  getMeals: (params = {}) => {
-    const qs = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => { if (v) qs.set(k, v); });
-    const query = qs.toString();
-    return request(`${API}/meals${query ? '?' + query : ''}`);
-  },
-  createMeal: (data) => request(`${API}/meals`, { method: 'POST', body: JSON.stringify(data) }),
+  getMeals: async (params) => (await request(`${API}/meals${query(params)}`)).map(toMeal),
+  createMeal: async (data) => toMeal(await send('POST', `${API}/meals`, data)),
   uploadMealPhotos: (id, files) => {
     const form = new FormData();
     files.forEach(f => form.append('photos', f));
-    return fetch(`${API}/meals/${id}/photos`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${getToken()}` },
-      body: form,
-    }).then(r => r.json());
+    return uploadForm(`${API}/meals/${id}/photos`, form);
   },
-  updateMeal: (id, data) => request(`${API}/meals/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  updateMeal: async (id, data) => toMeal(await send('PUT', `${API}/meals/${id}`, data)),
   deleteMeal: (id) => request(`${API}/meals/${id}`, { method: 'DELETE' }),
   getDishes: () => request(`${API}/dishes`),
 
   // Groups
   getGroups: () => request(`${API}/groups`),
-  createGroup: (name) => request(`${API}/groups`, { method: 'POST', body: JSON.stringify({ name }) }),
+  createGroup: (name) => send('POST', `${API}/groups`, { name }),
   getGroupMembers: (id) => request(`${API}/groups/${id}/members`),
-  joinGroup: (invite_code) => request(`${API}/groups/join`, { method: 'POST', body: JSON.stringify({ invite_code }) }),
+  joinGroup: (invite_code) => send('POST', `${API}/groups/join`, { invite_code }),
 
   // Planned
-  getPlanned: (group_id) => request(`${API}/planned${group_id ? '?group_id=' + group_id : ''}`),
-  createPlanned: (data) => request(`${API}/planned`, { method: 'POST', body: JSON.stringify(data) }),
+  getPlanned: (group_id) => request(`${API}/planned${query({ group_id })}`),
+  createPlanned: (data) => send('POST', `${API}/planned`, data),
   deletePlanned: (id) => request(`${API}/planned/${id}`, { method: 'DELETE' }),
 
   // Profile
   getProfile: () => request(`${API}/profile`),
 
   // Suggestions
-  getSuggestions: (params = {}) => {
-    const qs = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => { if (v) qs.set(k, v); });
-    const query = qs.toString();
-    return request(`${API}/suggest${query ? '?' + query : ''}`);
-  },
+  getSuggestions: (params) => request(`${API}/suggest${query(params)}`),
 };

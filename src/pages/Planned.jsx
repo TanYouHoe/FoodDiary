@@ -1,23 +1,12 @@
+// UI connector: the planned visits page. Loads the list for the chosen group,
+// adds and removes planned visits.
+
 import { useState, useEffect } from 'react';
 import { api } from '../api';
+import { sortByPriority, checkPlannedForm, DEFAULT_PRIORITY } from '../../logic/planned.js';
+import PlannedView from '../ui/PlannedView.jsx';
 
-const PRIORITY_OPTIONS = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-];
-
-function priorityClass(p) {
-  if (p === 'high') return 'badge-priority-high';
-  if (p === 'medium') return 'badge-priority-medium';
-  return 'badge-priority-low';
-}
-
-function priorityOrder(p) {
-  if (p === 'high') return 0;
-  if (p === 'medium') return 1;
-  return 2;
-}
+const emptyForm = { restaurantId: '', priority: DEFAULT_PRIORITY, notes: '' };
 
 export default function Planned() {
   const [planned, setPlanned] = useState([]);
@@ -25,29 +14,21 @@ export default function Planned() {
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  // Form state
-  const [restaurantId, setRestaurantId] = useState('');
-  const [priority, setPriority] = useState('medium');
-  const [notes, setNotes] = useState('');
+  const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
-
-  // Group toggle
-  const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [groupId, setGroupId] = useState('');
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [pData, rData, gData] = await Promise.all([
-        api.getPlanned(selectedGroupId || undefined),
+      const [p, r, g] = await Promise.all([
+        api.getPlanned(groupId || undefined),
         api.getRestaurants(),
         api.getGroups(),
       ]);
-      const items = pData.planned || pData || [];
-      items.sort((a, b) => priorityOrder(a.priority) - priorityOrder(b.priority));
-      setPlanned(items);
-      setRestaurants(rData.restaurants || rData || []);
-      setGroups(gData.groups || gData || []);
+      setPlanned(sortByPriority(p));
+      setRestaurants(r);
+      setGroups(g);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -57,27 +38,19 @@ export default function Planned() {
 
   useEffect(() => {
     fetchData();
-  }, [selectedGroupId]);
+  }, [groupId]);
 
-  const handleAdd = async (e) => {
-    e.preventDefault();
-    if (!restaurantId) {
-      setError('Please select a restaurant');
+  const add = async () => {
+    const input = checkPlannedForm(form, groupId);
+    if (!input.ok) {
+      setError(input.error);
       return;
     }
     setSubmitting(true);
     setError('');
     try {
-      const data = {
-        restaurant_id: Number(restaurantId),
-        priority,
-        notes: notes.trim() || null,
-      };
-      if (selectedGroupId) data.group_id = Number(selectedGroupId);
-      await api.createPlanned(data);
-      setRestaurantId('');
-      setPriority('medium');
-      setNotes('');
+      await api.createPlanned(input.value);
+      setForm(emptyForm);
       await fetchData();
     } catch (err) {
       setError(err.message);
@@ -86,7 +59,7 @@ export default function Planned() {
     }
   };
 
-  const handleDelete = async (id) => {
+  const remove = async (id) => {
     if (!confirm('Remove this planned visit?')) return;
     try {
       await api.deletePlanned(id);
@@ -96,115 +69,20 @@ export default function Planned() {
     }
   };
 
-  const restaurantName = (id) => {
-    const r = restaurants.find((r) => r.id === id);
-    return r ? r.name : 'Unknown';
-  };
-
-  const restaurantCuisine = (id) => {
-    const r = restaurants.find((r) => r.id === id);
-    return r ? r.cuisine_type : null;
-  };
-
-  if (loading) return <div className="loading">Loading planned visits...</div>;
-
   return (
-    <div className="planned-page">
-      <div className="page-header">
-        <h2>Planned Visits</h2>
-        <div className="group-toggle">
-          <select
-            value={selectedGroupId}
-            onChange={(e) => setSelectedGroupId(e.target.value)}
-            className="filter-select"
-          >
-            <option value="">Personal</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {error && <div className="error-message">{error}</div>}
-
-      <form className="inline-form" onSubmit={handleAdd}>
-        <h3>Add to Planned</h3>
-        <div className="form-row">
-          <div className="form-group">
-            <label htmlFor="planned-restaurant">Restaurant *</label>
-            <select
-              id="planned-restaurant"
-              value={restaurantId}
-              onChange={(e) => setRestaurantId(e.target.value)}
-              required
-            >
-              <option value="">Select a restaurant</option>
-              {restaurants.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-          </div>
-          <div className="form-group">
-            <label htmlFor="planned-priority">Priority</label>
-            <select
-              id="planned-priority"
-              value={priority}
-              onChange={(e) => setPriority(e.target.value)}
-            >
-              {PRIORITY_OPTIONS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="form-group">
-          <label htmlFor="planned-notes">Notes</label>
-          <textarea
-            id="planned-notes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Any notes? (optional)"
-            rows={2}
-          />
-        </div>
-        <button type="submit" className="btn-primary" disabled={submitting}>
-          {submitting ? 'Adding...' : 'Add to Planned'}
-        </button>
-      </form>
-
-      {planned.length === 0 ? (
-        <div className="empty-state">
-          <p>No planned visits yet. Add one above!</p>
-        </div>
-      ) : (
-        <div className="planned-list">
-          {planned.map((p) => (
-            <div key={p.id} className="planned-row">
-              <div className="planned-info">
-                <span className="planned-name">
-                  {p.restaurant_name || restaurantName(p.restaurant_id)}
-                </span>
-                {(p.cuisine_type || restaurantCuisine(p.restaurant_id)) && (
-                  <span className="badge badge-cuisine">
-                    {p.cuisine_type || restaurantCuisine(p.restaurant_id)}
-                  </span>
-                )}
-                <span className={`badge ${priorityClass(p.priority)}`}>
-                  {p.priority}
-                </span>
-                {p.notes && <span className="planned-notes">{p.notes}</span>}
-              </div>
-              <button
-                className="btn-danger btn-sm"
-                onClick={() => handleDelete(p.id)}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <PlannedView
+      loading={loading}
+      error={error}
+      planned={planned}
+      restaurants={restaurants}
+      groups={groups}
+      groupId={groupId}
+      form={form}
+      submitting={submitting}
+      onGroup={setGroupId}
+      onField={(key, value) => setForm(f => ({ ...f, [key]: value }))}
+      onAdd={add}
+      onRemove={remove}
+    />
   );
 }

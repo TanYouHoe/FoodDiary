@@ -15,7 +15,20 @@ Self-contained: one SQLite file, one Express process. The server also serves the
 - **Groups** — create or join a group with a generated invite code (owner / member roles) to share meals and planned visits.
 - **Planned visits** — a wishlist of restaurants with low / medium / high priority.
 - **Recommendation engine** — see [Recommendation engine](#recommendation-engine).
-- **Tests** — `node --test` suite covering auth, profile building, and suggestions.
+- **Tests** — `node --test` suite: the whole HTTP API on an in-memory database, the profile and suggestion rules, and a layering guard.
+
+## Code layout
+
+The code follows the four-layer standard (`docs/standards/four-layer.md` in the AI repo). Each file holds one layer; `tests/layering.test.js` keeps the pure files pure.
+
+| Folder | Layer | Holds |
+| ------ | ----- | ----- |
+| `logic/` | Logic | Business rules. Pure functions, shared by the server and the browser. |
+| `server/` | Connector | `app.js` composition root, `db.js`, `routes/*`, auth, uploads, the suggestion and profile stores. SQL lives here, rules do not. |
+| `server.js` | Connector | Entry point: reads the environment, opens the database, listens. |
+| `src/api.js`, `src/token-store.js`, `src/config.js`, `src/google.js`, `src/clipboard.js` | Connector | The browser's HTTP client, token storage, build settings, Google scripts, clipboard. |
+| `src/ui/` | UI | Views (props in, markup out) and the pure functions that shape data into props. No hooks. |
+| `src/hooks/`, `src/widgets/`, `src/pages/`, `src/App.jsx`, `src/AuthContext.jsx` | UI connector | Hooks, and the components that load data, hold state and pass props and slots to the views. |
 
 ## Run
 
@@ -48,10 +61,10 @@ Then open <http://localhost:5176>.
 ### Tests
 
 ```sh
-npm test           # node --test tests/
+npm test           # node --test "tests/**/*.test.js"
 ```
 
-> The tests run against a live API at `http://localhost:3004`, so start the server (`npm run server`) before running them.
+The tests need no running server. `tests/api.test.js` builds the app on an in-memory database. To run the same assertions against a server that is already running on a fresh database, set `FOOD_DIARY_TEST_BASE=http://127.0.0.1:<port>`.
 
 ### Ports
 
@@ -148,7 +161,7 @@ All routes are JSON. Every route except the auth endpoints and `/api/health` req
 
 ## Recommendation engine
 
-Two algorithms, both in [`suggest.js`](suggest.js), selected by the `type` query param on `/api/suggest`.
+Two algorithms, selected by the `type` query param on `/api/suggest`. The rules are in [`logic/suggest.js`](logic/suggest.js); [`server/suggestions.js`](server/suggestions.js) reads the rows and calls them.
 
 **Restaurant scorer** (`getSuggestions`, default) ranks restaurants by a weighted sum and returns the top 3, each with a human-readable explanation:
 
@@ -162,9 +175,9 @@ Two algorithms, both in [`suggest.js`](suggest.js), selected by the `type` query
 
 **Meal suggester** (`suggestMeal`, `?type=meal`) is profile-driven. For the current day-of-week and meal period it reads your learned profile (`user_meal_profiles`) and blends *familiar* favorites with *new* picks according to your `adventure_ratio` for that slot. With little history it falls back to the restaurant scorer.
 
-Meal periods (from [`profile.js`](profile.js), by hour of `visited_at`): `breakfast` (<11), `lunch` (11–15), `tea` (15–17), `dinner` (17–21), `supper` (≥21).
+Meal periods (from [`logic/meal-period.js`](logic/meal-period.js), by hour of `visited_at` in the server's local time zone): `breakfast` (<11), `lunch` (11–15), `tea` (15–17), `dinner` (17–21), `supper` (≥21).
 
-The profile (`user_meal_profiles`) is **rebuilt automatically** on every meal create / update / delete. `rebuildProfile` recomputes, per (day-of-week, meal-period), the average price range, adventure ratio, average rating, meal frequency (per week), group ratio, and total meals.
+The profile (`user_meal_profiles`) is **rebuilt automatically** on every meal create / update / delete. `buildProfileRows` ([`logic/profile.js`](logic/profile.js)) computes, per (day-of-week, meal-period), the average price range, adventure ratio, average rating, meal frequency (per week), group ratio, and total meals.
 
 ## Data & storage
 

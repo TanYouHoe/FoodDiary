@@ -1,5 +1,8 @@
+// UI connector: the signed-in user, shared through React context.
+
 import { createContext, useContext, useState, useEffect } from 'react';
 import { api } from './api';
+import { getToken, setToken, clearToken } from './token-store.js';
 
 const AuthContext = createContext(null);
 
@@ -8,34 +11,24 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      api.getMe().then(setUser).catch(() => localStorage.removeItem('token')).finally(() => setLoading(false));
+    if (getToken()) {
+      api.getMe().then(setUser).catch(() => clearToken()).finally(() => setLoading(false));
     } else {
       setLoading(false);
     }
   }, []);
 
-  const login = async (email, password) => {
-    const { token, user } = await api.login({ email, password });
-    localStorage.setItem('token', token);
-    setUser(user);
+  const signIn = ({ token, user: signedIn }) => {
+    setToken(token);
+    setUser(signedIn);
   };
 
-  const register = async (name, email, password) => {
-    const { token, user } = await api.register({ name, email, password });
-    localStorage.setItem('token', token);
-    setUser(user);
-  };
-
-  const googleLogin = async (credential) => {
-    const { token, user } = await api.googleLogin(credential);
-    localStorage.setItem('token', token);
-    setUser(user);
-  };
+  const login = async (email, password) => signIn(await api.login({ email, password }));
+  const register = async (name, email, password) => signIn(await api.register({ name, email, password }));
+  const googleLogin = async (credential) => signIn(await api.googleLogin(credential));
 
   const logout = () => {
-    localStorage.removeItem('token');
+    clearToken();
     setUser(null);
   };
 

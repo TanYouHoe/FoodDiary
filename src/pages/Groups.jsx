@@ -1,21 +1,18 @@
+// UI connector: the groups page. Create, join, expand and copy invite codes.
+
 import { useState, useEffect } from 'react';
 import { api } from '../api';
+import { copyText } from '../clipboard.js';
+import GroupsView from '../ui/GroupsView.jsx';
+
+const COPIED_MS = 2000;
 
 export default function Groups() {
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  // Create group
-  const [newGroupName, setNewGroupName] = useState('');
-  const [creating, setCreating] = useState(false);
-
-  // Join group
-  const [inviteCode, setInviteCode] = useState('');
-  const [joining, setJoining] = useState(false);
-  const [joinError, setJoinError] = useState('');
-
-  // Expanded group
+  const [create, setCreate] = useState({ name: '', busy: false });
+  const [join, setJoin] = useState({ code: '', busy: false, error: '' });
   const [expandedId, setExpandedId] = useState(null);
   const [members, setMembers] = useState([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
@@ -23,8 +20,7 @@ export default function Groups() {
 
   const fetchGroups = async () => {
     try {
-      const data = await api.getGroups();
-      setGroups(data.groups || data || []);
+      setGroups(await api.getGroups());
     } catch (err) {
       setError(err.message);
     } finally {
@@ -36,39 +32,36 @@ export default function Groups() {
     fetchGroups();
   }, []);
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    if (!newGroupName.trim()) return;
-    setCreating(true);
+  const submitCreate = async () => {
+    if (!create.name.trim()) return;
+    setCreate(c => ({ ...c, busy: true }));
     setError('');
     try {
-      await api.createGroup(newGroupName.trim());
-      setNewGroupName('');
+      await api.createGroup(create.name.trim());
+      setCreate(c => ({ ...c, name: '' }));
       await fetchGroups();
     } catch (err) {
       setError(err.message);
     } finally {
-      setCreating(false);
+      setCreate(c => ({ ...c, busy: false }));
     }
   };
 
-  const handleJoin = async (e) => {
-    e.preventDefault();
-    if (!inviteCode.trim()) return;
-    setJoining(true);
-    setJoinError('');
+  const submitJoin = async () => {
+    if (!join.code.trim()) return;
+    setJoin(j => ({ ...j, busy: true, error: '' }));
     try {
-      await api.joinGroup(inviteCode.trim());
-      setInviteCode('');
+      await api.joinGroup(join.code.trim());
+      setJoin(j => ({ ...j, code: '' }));
       await fetchGroups();
     } catch (err) {
-      setJoinError(err.message);
+      setJoin(j => ({ ...j, error: err.message }));
     } finally {
-      setJoining(false);
+      setJoin(j => ({ ...j, busy: false }));
     }
   };
 
-  const toggleExpand = async (group) => {
+  const toggle = async (group) => {
     if (expandedId === group.id) {
       setExpandedId(null);
       setMembers([]);
@@ -78,8 +71,7 @@ export default function Groups() {
     setLoadingMembers(true);
     setCopied(false);
     try {
-      const data = await api.getGroupMembers(group.id);
-      setMembers(data.members || data || []);
+      setMembers(await api.getGroupMembers(group.id));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -87,130 +79,29 @@ export default function Groups() {
     }
   };
 
-  const copyInviteCode = async (code) => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Fallback
-      const textarea = document.createElement('textarea');
-      textarea.value = code;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+  const copy = async (code) => {
+    await copyText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), COPIED_MS);
   };
 
-  if (loading) return <div className="loading">Loading groups...</div>;
-
   return (
-    <div className="groups-page">
-      <h2>Groups</h2>
-
-      {error && <div className="error-message">{error}</div>}
-
-      <div className="groups-actions">
-        <form className="inline-form inline-form-row" onSubmit={handleCreate}>
-          <h3>Create Group</h3>
-          <div className="form-row">
-            <input
-              type="text"
-              value={newGroupName}
-              onChange={(e) => setNewGroupName(e.target.value)}
-              placeholder="Group name"
-              required
-            />
-            <button type="submit" className="btn-primary" disabled={creating}>
-              {creating ? 'Creating...' : 'Create'}
-            </button>
-          </div>
-        </form>
-
-        <form className="inline-form inline-form-row" onSubmit={handleJoin}>
-          <h3>Join Group</h3>
-          {joinError && <div className="error-message">{joinError}</div>}
-          <div className="form-row">
-            <input
-              type="text"
-              value={inviteCode}
-              onChange={(e) => setInviteCode(e.target.value)}
-              placeholder="Invite code"
-              required
-            />
-            <button type="submit" className="btn-primary" disabled={joining}>
-              {joining ? 'Joining...' : 'Join'}
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {groups.length === 0 ? (
-        <div className="empty-state">
-          <p>You are not in any groups yet. Create one or join with an invite code.</p>
-        </div>
-      ) : (
-        <div className="group-list">
-          {groups.map((g) => (
-            <div key={g.id} className={`group-card ${expandedId === g.id ? 'expanded' : ''}`}>
-              <div
-                className="group-card-header"
-                onClick={() => toggleExpand(g)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => { if (e.key === 'Enter') toggleExpand(g); }}
-              >
-                <div className="group-card-info">
-                  <span className="group-name">{g.name}</span>
-                  <span className="badge badge-role">{g.role || 'member'}</span>
-                  {g.member_count != null && (
-                    <span className="group-member-count">
-                      {g.member_count} member{g.member_count !== 1 ? 's' : ''}
-                    </span>
-                  )}
-                </div>
-                <span className="expand-icon">{expandedId === g.id ? '▾' : '▸'}</span>
-              </div>
-
-              {expandedId === g.id && (
-                <div className="group-card-body">
-                  {g.invite_code && (
-                    <div className="invite-code-section">
-                      <span className="invite-label">Invite Code:</span>
-                      <code className="invite-code">{g.invite_code}</code>
-                      <button
-                        className="btn-sm btn-secondary"
-                        onClick={() => copyInviteCode(g.invite_code)}
-                      >
-                        {copied ? 'Copied!' : 'Copy'}
-                      </button>
-                    </div>
-                  )}
-
-                  <h4>Members</h4>
-                  {loadingMembers ? (
-                    <p>Loading members...</p>
-                  ) : members.length === 0 ? (
-                    <p>No members found.</p>
-                  ) : (
-                    <ul className="members-list">
-                      {members.map((m) => (
-                        <li key={m.user_id || m.id} className="member-item">
-                          <span className="member-name">{m.name || m.email}</span>
-                          <span className="badge badge-role">{m.role}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <GroupsView
+      loading={loading}
+      error={error}
+      groups={groups}
+      create={create}
+      join={join}
+      expandedId={expandedId}
+      members={members}
+      loadingMembers={loadingMembers}
+      copied={copied}
+      onCreateName={(name) => setCreate(c => ({ ...c, name }))}
+      onCreate={submitCreate}
+      onInviteCode={(code) => setJoin(j => ({ ...j, code }))}
+      onJoin={submitJoin}
+      onToggle={toggle}
+      onCopy={copy}
+    />
   );
 }
