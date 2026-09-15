@@ -69,13 +69,19 @@ export function mealRoutes({ db, upload, refreshProfile, groupAllowed }) {
     }
     // The meal may have changed or gone while the files uploaded: read it again
     // and write in one transaction. A refused upload removes its files.
-    const outcome = db.transaction(() => {
-      const meal = mealRow.get(req.params.id);
-      if (!meal) return { missing: true };
-      const merged = mergeMealPhotos(JSON.parse(meal.photo_urls || '[]'), req.files.map(uploadedUrl), MAX_MEAL_PHOTOS);
-      if (merged.ok) setPhotos.run(JSON.stringify(merged.value), meal.id);
-      return merged;
-    })();
+    let outcome;
+    try {
+      outcome = db.transaction(() => {
+        const meal = mealRow.get(req.params.id);
+        if (!meal) return { missing: true };
+        const merged = mergeMealPhotos(JSON.parse(meal.photo_urls || '[]'), req.files.map(uploadedUrl), MAX_MEAL_PHOTOS);
+        if (merged.ok) setPhotos.run(JSON.stringify(merged.value), meal.id);
+        return merged;
+      })();
+    } catch (err) {
+      removeUploaded(req.files);
+      throw err;
+    }
     if (outcome.missing) {
       removeUploaded(req.files);
       return notFound(res);

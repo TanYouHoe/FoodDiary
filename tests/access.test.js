@@ -18,14 +18,18 @@ describe('canChangeRestaurant', () => {
 
 describe('canDeleteRestaurant', () => {
   const restaurant = { id: 10, added_by: alice.id };
-  const unused = { otherUsersMeals: 0, otherUsersPlanned: 0 };
+  const unused = { otherUsersMeals: 0, otherUsersPlanned: 0, groupMeals: 0, groupPlanned: 0 };
   it('lets the adder delete it while nobody else uses it', () => assert.equal(canDeleteRestaurant(alice, restaurant, unused), true));
   it('refuses the adder when other people logged meals or planned visits there', () => {
-    assert.equal(canDeleteRestaurant(alice, restaurant, { otherUsersMeals: 1, otherUsersPlanned: 0 }), false);
-    assert.equal(canDeleteRestaurant(alice, restaurant, { otherUsersMeals: 0, otherUsersPlanned: 2 }), false);
+    assert.equal(canDeleteRestaurant(alice, restaurant, { ...unused, otherUsersMeals: 1 }), false);
+    assert.equal(canDeleteRestaurant(alice, restaurant, { ...unused, otherUsersPlanned: 2 }), false);
+  });
+  it('refuses the adder when group rows are there, even rows the adder wrote', () => {
+    assert.equal(canDeleteRestaurant(alice, restaurant, { ...unused, groupMeals: 1 }), false);
+    assert.equal(canDeleteRestaurant(alice, restaurant, { ...unused, groupPlanned: 1 }), false);
   });
   it('lets the owner always delete it', () => {
-    assert.equal(canDeleteRestaurant(owner, restaurant, { otherUsersMeals: 3, otherUsersPlanned: 3 }), true);
+    assert.equal(canDeleteRestaurant(owner, restaurant, { otherUsersMeals: 3, otherUsersPlanned: 3, groupMeals: 3, groupPlanned: 3 }), true);
   });
   it('refuses another member', () => assert.equal(canDeleteRestaurant(bob, restaurant, unused), false));
 });

@@ -19,10 +19,14 @@ export function canChangeRestaurant(user, restaurant) {
 
 // Deleting a restaurant also deletes every meal and planned visit there.
 // usage: { otherUsersMeals, otherUsersPlanned } — rows of users other than
-// `user`. The owner may always delete; the adder only while nobody else uses it.
-export function canDeleteRestaurant(user, restaurant, { otherUsersMeals, otherUsersPlanned }) {
+// `user`; { groupMeals, groupPlanned } — rows in any group, whoever wrote them,
+// because the other members see those rows. The owner may always delete; the
+// adder only while none of these rows exist.
+export function canDeleteRestaurant(user, restaurant, { otherUsersMeals, otherUsersPlanned, groupMeals, groupPlanned }) {
   if (isOwner(user)) return true;
-  return restaurant.added_by === user.id && otherUsersMeals === 0 && otherUsersPlanned === 0;
+  return restaurant.added_by === user.id
+    && otherUsersMeals === 0 && otherUsersPlanned === 0
+    && groupMeals === 0 && groupPlanned === 0;
 }
 
 // A meal is personal: only the user who logged it.

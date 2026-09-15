@@ -48,7 +48,7 @@ export function createApp({
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
   app.use('/api/auth', authRoutes({ db, tokens, authenticate, verifyGoogle, googleClientId }));
-  app.use('/api/restaurants', authenticate, restaurantRoutes({ db, upload }));
+  app.use('/api/restaurants', authenticate, restaurantRoutes({ db, upload, uploadsDir, refreshProfile }));
   app.use('/api/meal-types', authenticate, mealTypeRoutes({ db }));
   app.use('/api/dish-types', authenticate, dishTypeRoutes({ db }));
   app.use('/api/dishes', authenticate, dishRoutes({ db }));

@@ -4,7 +4,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { checkGroupName, checkInviteCode, parseGroupId, OWNER_ROLE, INVITE_CODE_BYTES } from '../../logic/accounts.js';
 import { pick, GROUP_FIELDS, GROUP_MEMBER_FIELDS } from '../rows.js';
-import { badRequest, notAllowed } from '../guards.js';
+import { badRequest, notFound, notAllowed } from '../guards.js';
 
 const newInviteCode = () => crypto.randomBytes(INVITE_CODE_BYTES).toString('hex');
 const toGroup = (row) => pick(row, GROUP_FIELDS);
@@ -52,7 +52,7 @@ export function groupRoutes({ db, groupAllowed }) {
     const input = checkInviteCode(req.body);
     if (!input.ok) return res.status(400).json({ error: input.error });
     const group = db.prepare('SELECT * FROM groups_ WHERE invite_code = ?').get(input.value.invite_code);
-    if (!group) return res.status(404).json({ error: 'Invalid invite code' });
+    if (!group) return notFound(res, 'Invalid invite code');
     const member = db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?').get(group.id, req.user.id);
     if (member) return res.status(409).json({ error: 'Already a member' });
     db.prepare('INSERT INTO group_members (group_id, user_id) VALUES (?, ?)').run(group.id, req.user.id);

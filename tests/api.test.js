@@ -5,9 +5,9 @@
 // assertions against a server that is already running on a fresh database.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 
 let base = process.env.FOOD_DIARY_TEST_BASE ? `${process.env.FOOD_DIARY_TEST_BASE}/api` : null;
 let server = null;
@@ -334,6 +334,50 @@ describe('API ownership and access', () => {
   const req = (method, path, who, body) => call(method, path, { ...as(who), body });
   const uploadAs = (path, field, who) => upload(path, field, 1, who.token, at);
   const uploadedFiles = () => readdirSync(dir).length;
+  const waitFor = async (check, what, timeoutMs = 3000) => {
+    const start = Date.now();
+    while (!check()) {
+      if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${what}`);
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+  };
+  // Starts a one-photo multipart upload, runs `midway` once multer has created
+  // the file on disk, then finishes the body. Returns the fetch Response.
+  const uploadWithPause = async (path, field, who, midway) => {
+    const boundary = 'fooddiary-test-boundary';
+    // The first chunk carries the whole photo, so multer opens and fills the file;
+    // only the closing boundary waits.
+    const head = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${field}"; filename="late.png"\r\nContent-Type: image/png\r\n\r\n`),
+      PNG,
+    ]);
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let step = 0;
+    const body = new ReadableStream({
+      async pull(controller) {
+        if (step++ === 0) { controller.enqueue(head); return; }
+        await gate;
+        controller.enqueue(tail);
+        controller.close();
+      },
+    });
+    const before = uploadedFiles();
+    const pending = fetch(`${at}${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${who.token}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body,
+      duplex: 'half',
+    });
+    try {
+      await waitFor(() => uploadedFiles() > before, 'multer to create the upload file');
+      midway();
+    } finally {
+      release(); // always end the body, or the server cannot close
+    }
+    return pending;
+  };
   const register = async (name) => {
     const r = await call('POST', '/auth/register', { at, body: { name, email: `${name}@own.test`, password: 'pw' } });
     return { ...r.body.user, token: r.body.token };
@@ -390,6 +434,40 @@ describe('API ownership and access', () => {
     assert.equal((await uploadAs(`/restaurants/${restaurant.id}/photo`, 'photo', olive)).status, 200);
   });
 
+  it('restaurant cover photo: a new photo removes the old file', async () => {
+    const onDisk = (url) => existsSync(join(dir, url.slice('/uploads/'.length)));
+    const first = (await uploadAs(`/restaurants/${restaurant.id}/photo`, 'photo', amy)).body.photo_url;
+    const count = uploadedFiles();
+    const second = await uploadAs(`/restaurants/${restaurant.id}/photo`, 'photo', amy);
+    assert.equal(second.status, 200);
+    assert.notEqual(second.body.photo_url, first);
+    assert.equal(onDisk(first), false);
+    assert.equal(onDisk(second.body.photo_url), true);
+    assert.equal(uploadedFiles(), count);
+  });
+
+  it('restaurant cover photo: an old URL outside the uploads dir is never removed', async () => {
+    const outside = join(dir, '..', `fooddiary-outside-${process.pid}.txt`);
+    writeFileSync(outside, 'keep me');
+    try {
+      db.prepare('UPDATE restaurants SET photo_url = ? WHERE id = ?').run(`/uploads/../${basename(outside)}`, restaurant.id);
+      assert.equal((await uploadAs(`/restaurants/${restaurant.id}/photo`, 'photo', amy)).status, 200);
+      assert.equal(existsSync(outside), true);
+    } finally {
+      rmSync(outside, { force: true });
+    }
+  });
+
+  it('restaurant cover photo: a restaurant deleted during the upload answers 404 and leaves no file', async () => {
+    const doomed = (await req('POST', '/restaurants', amy, { name: 'Doomed' })).body;
+    const before = uploadedFiles();
+    const res = await uploadWithPause(`/restaurants/${doomed.id}/photo`, 'photo', amy,
+      () => db.prepare('DELETE FROM restaurants WHERE id = ?').run(doomed.id));
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), NOT_FOUND);
+    assert.equal(uploadedFiles(), before);
+  });
+
   it('meals: only the user who logged it may change it', async () => {
     const created = await req('POST', '/meals', amy, {
       restaurant_id: restaurant.id, rating: 4, visited_at: '2026-09-01T12:00:00.000Z', dishes: [null, 5, 'Fried Rice'],
@@ -438,32 +516,10 @@ describe('API ownership and access', () => {
 
   it('a meal deleted while its photos upload answers 404 and leaves no file', async () => {
     const doomed = (await req('POST', '/meals', amy, { restaurant_id: restaurant.id, rating: 3, visited_at: '2026-09-01T20:00:00.000Z' })).body;
-    const boundary = 'fooddiary-test-boundary';
-    const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="photos"; filename="late.png"\r\nContent-Type: image/png\r\n\r\n`);
-    const tail = Buffer.concat([PNG, Buffer.from(`\r\n--${boundary}--\r\n`)]);
-    let release;
-    const gate = new Promise(resolve => { release = resolve; });
-    let step = 0;
-    const body = new ReadableStream({
-      async pull(controller) {
-        if (step++ === 0) { controller.enqueue(head); return; }
-        await gate;
-        controller.enqueue(tail);
-        controller.close();
-      },
-    });
     const before = uploadedFiles();
-    const pending = fetch(`${at}/meals/${doomed.id}/photos`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${amy.token}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
-      body,
-      duplex: 'half',
-    });
-    // The access guard has run once the headers arrive; delete the meal before the body ends.
-    await new Promise(resolve => setTimeout(resolve, 150));
-    db.prepare('DELETE FROM meals WHERE id = ?').run(doomed.id);
-    release();
-    const res = await pending;
+    // The file exists on disk, so the guard has passed; the meal goes before the body ends.
+    const res = await uploadWithPause(`/meals/${doomed.id}/photos`, 'photos', amy,
+      () => db.prepare('DELETE FROM meals WHERE id = ?').run(doomed.id));
     assert.equal(res.status, 404);
     assert.deepEqual(await res.json(), NOT_FOUND);
     assert.equal(uploadedFiles(), before);
@@ -581,6 +637,20 @@ describe('API ownership and access', () => {
     assert.ok(benMeals() > 0);
     assert.equal((await req('GET', `/restaurants/${restaurant.id}`, amy)).status, 200);
 
+    const IN_USE = { status: 409, body: { error: 'Restaurant is used by other people' } };
+    const plannedOnly = (await req('POST', '/restaurants', amy, { name: 'Ben Plans Here' })).body;
+    assert.equal((await req('POST', '/planned', ben, { restaurant_id: plannedOnly.id })).status, 201);
+    assert.deepEqual(await req('DELETE', `/restaurants/${plannedOnly.id}`, amy), IN_USE);
+
+    // Group rows block the adder even when the adder wrote them: other members see them.
+    const groupMealOnly = (await req('POST', '/restaurants', amy, { name: 'Crew Lunch' })).body;
+    await req('POST', '/meals', amy, { restaurant_id: groupMealOnly.id, rating: 4, visited_at: '2026-09-05T13:00:00.000Z', group_id: group.id });
+    assert.deepEqual(await req('DELETE', `/restaurants/${groupMealOnly.id}`, amy), IN_USE);
+    const groupPlanOnly = (await req('POST', '/restaurants', amy, { name: 'Crew Plan' })).body;
+    await req('POST', '/planned', amy, { restaurant_id: groupPlanOnly.id, group_id: group.id });
+    assert.deepEqual(await req('DELETE', `/restaurants/${groupPlanOnly.id}`, amy), IN_USE);
+    assert.equal((await req('DELETE', `/restaurants/${groupPlanOnly.id}`, olive)).status, 204);
+
     const solo = (await req('POST', '/restaurants', amy, { name: 'Amy Only' })).body;
     await req('POST', '/meals', amy, { restaurant_id: solo.id, rating: 4, visited_at: '2026-09-05T12:00:00.000Z' });
     assert.equal((await req('DELETE', `/restaurants/${solo.id}`, amy)).status, 204);
@@ -597,7 +667,11 @@ describe('API ownership and access', () => {
 
   it('the allowed user can still delete; the owner may delete a shared restaurant', async () => {
     assert.equal((await req('DELETE', `/meals/${meal.id}`, amy)).status, 204);
+    const totalMeals = async (who) => (await req('GET', '/profile', who)).body.reduce((n, row) => n + row.total_meals, 0);
+    const benBefore = await totalMeals(ben);
+    assert.ok(benBefore > 0);
     assert.equal((await req('DELETE', `/restaurants/${restaurant.id}`, olive)).status, 204);
     assert.equal((await req('GET', `/restaurants/${restaurant.id}`, amy)).status, 404);
+    assert.ok(await totalMeals(ben) < benBefore, "the delete rebuilds the other user's profile");
   });
 });
