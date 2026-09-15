@@ -45,6 +45,8 @@ export const pwaOptions = {
     // The build's scripts, styles and index.html. The plugin itself adds the
     // manifest, its icons and includeAssets; a glob for them lists them twice.
     globPatterns: ['**/*.{js,css,html}'],
+    // The precached index.html keeps the response headers (CSP included) it
+    // had at install time, until the service worker updates.
     navigateFallback: '/index.html',
     navigateFallbackDenylist: NAVIGATE_FALLBACK_DENYLIST,
     // Workbox copies each urlPattern into sw.js as source text, so a pattern

@@ -2,7 +2,9 @@
 // maps response bodies into the shapes the screens use.
 
 import { getToken } from './token-store.js';
+import { APP_BUILD } from './config.js';
 import { MFA_ENROLL_REQUIRED } from '../logic/two-factor.js';
+import { isNewBuild, BUILD_HEADER } from '../logic/app-build.js';
 
 const API = '/api';
 
@@ -20,6 +22,24 @@ function notifyIfEnrollRequired(body) {
   if (body?.code === MFA_ENROLL_REQUIRED.code) enrollListeners.forEach(listener => listener());
 }
 
+// Listeners told when the server answers from a different build than this page.
+const buildListeners = new Set();
+let announcedBuild = null; // told once per server build, not on every answer
+
+// Returns a function that removes the listener.
+export function onNewBuild(listener) {
+  buildListeners.add(listener);
+  return () => buildListeners.delete(listener);
+}
+
+// res: a fetch Response. Tells the listeners about a new server build.
+function notifyIfNewBuild(res) {
+  const serverBuild = res.headers.get(BUILD_HEADER);
+  if (!isNewBuild(APP_BUILD, serverBuild) || serverBuild === announcedBuild) return;
+  announcedBuild = serverBuild;
+  buildListeners.forEach(listener => listener(serverBuild));
+}
+
 // Every request names the browser's IANA time zone, so the server reads meal
 // periods and weekdays where the user is.
 function commonHeaders() {
@@ -35,6 +55,7 @@ async function request(url, options = {}) {
     headers: { 'Content-Type': 'application/json', ...commonHeaders() },
     ...options,
   });
+  notifyIfNewBuild(res);
   if (res.status === 204) return null;
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: 'Request failed' }));
@@ -62,6 +83,7 @@ function uploadForm(url, form) {
     headers: commonHeaders(),
     body: form,
   }).then(async (r) => {
+    notifyIfNewBuild(r);
     const body = await r.json();
     notifyIfEnrollRequired(body);
     return body;

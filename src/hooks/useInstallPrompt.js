@@ -21,8 +21,12 @@ export function useInstallPrompt() {
   const install = async () => {
     if (!promptEvent) return;
     setPromptEvent(null); // an event can prompt one time only
-    await promptEvent.prompt();
-    await promptEvent.userChoice.catch(() => null);
+    try {
+      await promptEvent.prompt();
+      await promptEvent.userChoice;
+    } catch {
+      // The browser refused to show the prompt; nothing to undo.
+    }
   };
 
   return { canInstall: promptEvent !== null, install };

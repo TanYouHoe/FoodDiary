@@ -6,6 +6,7 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { api, onEnrollRequired } from './api';
 import { getToken, setToken, clearToken } from './token-store.js';
+import { clearPhotoCache } from './pwa-cache.js';
 import { needsEnrollment } from './ui/two-factor.js';
 
 const AuthContext = createContext(null);
@@ -19,7 +20,8 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     if (getToken()) {
-      api.getMe().then(setUser).catch(() => clearToken()).finally(() => setLoading(false));
+      // A refused or expired session ends here, like a sign-out.
+      api.getMe().then(setUser).catch(() => { clearToken(); clearPhotoCache(); }).finally(() => setLoading(false));
     } else {
       setLoading(false);
     }
@@ -66,6 +68,7 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     clearToken();
+    clearPhotoCache(); // fire and forget
     setUser(null);
     setMfaToken(null);
     setEnrollRequired(false);

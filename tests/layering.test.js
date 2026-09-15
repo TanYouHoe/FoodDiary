@@ -60,6 +60,12 @@ const isUiFile = (f) => {
 };
 const UI_FILES = walk(join(ROOT, 'src')).filter(isUiFile);
 
+// Pure files outside logic/ and src/ui/, each with the only imports it may use.
+const PURE_EXTRA = [
+  ['pwa.config.js', () => false],
+  ['tools/icon-image.mjs', (spec) => spec === 'node:zlib' || spec === '../pwa.config.js'],
+];
+
 const resolvesInside = (spec, file, ...roots) => {
   if (!spec.startsWith('.')) return false;
   const target = rel(resolve(dirname(file), spec));
@@ -75,6 +81,14 @@ describe('layering', () => {
     it(`Logic ${rel(file)} is pure and imports only Logic`, () => {
       const found = violations(file, { allowImport: (spec, f) => resolvesInside(spec, f, 'logic/') });
       assert.deepEqual(found, []);
+    });
+  }
+
+  for (const [path, allowImport] of PURE_EXTRA) {
+    it(`pure ${path} reads nothing ambient and imports only what it is allowed`, () => {
+      const file = join(ROOT, path);
+      assert.ok(existsSync(file), path);
+      assert.deepEqual(violations(file, { allowImport }), []);
     });
   }
 

@@ -44,7 +44,6 @@ function App() {
   const banner = (
     <UpdateBanner
       needRefresh={appUpdate.needRefresh}
-      offlineReady={appUpdate.offlineReady}
       onReload={appUpdate.update}
       onDismiss={appUpdate.dismiss}
     />

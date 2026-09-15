@@ -8,6 +8,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { manifest, APPLE_TOUCH_ICON, BRAND_COLOR } from '../pwa.config.js';
 import { cacheControlFor, IMMUTABLE } from '../logic/http-policy.js';
+import { normalizeBuildId, BUILD_ID_FILE } from '../logic/app-build.js';
 
 const DIST = join(resolve(dirname(fileURLToPath(import.meta.url)), '..'), 'dist');
 const skip = existsSync(join(DIST, 'index.html')) ? false : 'dist/ is absent (run npm run build)';
@@ -34,6 +35,7 @@ describe('dist (PWA build)', { skip }, () => {
     assert.match(html, new RegExp(`<meta name="theme-color" content="${BRAND_COLOR}"`));
     assert.match(html, /<link rel="apple-touch-icon" href="\/apple-touch-icon\.png"/);
     assert.match(html, /<meta name="apple-mobile-web-app-capable" content="yes"/);
+    assert.match(html, /<meta name="mobile-web-app-capable" content="yes"/);
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
     assert.ok(scripts.length > 0);
     for (const [, attributes, body] of scripts) {
@@ -60,6 +62,13 @@ describe('dist (PWA build)', { skip }, () => {
     }
     assert.ok(urls.some(u => /^assets\/index-.+\.js$/.test(u)), 'the app script');
     assert.ok(urls.every(u => !u.startsWith('api/') && !u.startsWith('uploads/')), 'no API answer or photo');
+  });
+
+  it('build-id.txt holds a valid id, and the app script carries the same id', () => {
+    const id = normalizeBuildId(read(BUILD_ID_FILE));
+    assert.ok(id, 'a valid build id');
+    const scripts = readdirSync(join(DIST, 'assets')).filter(n => /^index-.+\.js$/.test(n));
+    assert.ok(scripts.some(n => read(`assets/${n}`).includes(JSON.stringify(id))), 'the id is built into the app');
   });
 
   it('every workbox runtime file at the root is served immutable', () => {
