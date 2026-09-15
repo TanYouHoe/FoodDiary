@@ -119,7 +119,11 @@ export function authRoutes({ db, authenticate, verifyGoogle, googleClientId, inv
       return res.json(sessions.afterFirstFactor(existing.id));
     }
 
-    if (!invites.isUsable(code, now())) return inviteRequired(res);
+    // A new account: the invite counts toward the IP lockout, as for register.
+    const at = now();
+    const outcome = await lockout.attempt(publicKeys(req.ip), at, () => invites.isUsable(code, at));
+    if (outcome === 'locked') return tooManyAttempts(res);
+    if (outcome === 'failed') return inviteRequired(res);
     // Google accounts get an unguessable password so the password login stays closed.
     const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
     const userId = redeem(res, code, now(), (role) =>

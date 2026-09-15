@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LOCKOUT_WINDOW_MS, LOCK_DURATION_MS, LOCKOUT_LIMITS, accountEmailKey, accountUserKey, ipKey,
-  isLocked, afterFailure, isAnyLocked, loginKeys, codeKeys, publicKeys, keysClearedBySuccess,
+  isLocked, afterFailure, isAnyLocked, reserveAttempts, releaseAttempt, loginKeys, codeKeys, publicKeys, keysClearedBySuccess,
 } from '../logic/lockout.js';
 
 const T0 = 1_800_000_000_000;
@@ -68,6 +68,40 @@ describe('lockout policy', () => {
     assert.equal(isLocked(null, T0), false);
     assert.equal(isAnyLocked([null, fail(1, 'ip')], T0), false);
     assert.equal(isAnyLocked([null, fail(8, 'account')], T0 + 8000), true);
+  });
+
+  it('reserve counts a failure up front for every key, unless a key is locked', () => {
+    const kinds = ['account', 'ip'];
+    const first = reserveAttempts([null, null], kinds, T0);
+    assert.equal(first.allowed, true);
+    assert.deepEqual(first.entries, [
+      { count: 1, windowStart: T0, lockedUntil: null },
+      { count: 1, windowStart: T0, lockedUntil: null },
+    ]);
+    const locked = fail(8, 'account');
+    const refused = reserveAttempts([locked, null], kinds, T0 + 8000);
+    assert.equal(refused.allowed, false);
+    assert.deepEqual(refused.entries, [locked, null], 'a refused attempt changes nothing');
+  });
+
+  it('the 8th reservation is allowed and locks, so the 9th is refused', () => {
+    let entries = [null];
+    for (let i = 0; i < 8; i++) {
+      const r = reserveAttempts(entries, ['account'], T0);
+      assert.equal(r.allowed, true, `reservation ${i + 1}`);
+      entries = r.entries;
+    }
+    assert.equal(reserveAttempts(entries, ['account'], T0).allowed, false);
+  });
+
+  it('release gives a reserved failure back and lifts a lock it caused', () => {
+    assert.equal(releaseAttempt(null, 'ip'), null);
+    assert.deepEqual(releaseAttempt({ count: 3, windowStart: T0, lockedUntil: null }, 'ip'), { count: 2, windowStart: T0, lockedUntil: null });
+    const eighth = fail(8, 'account');
+    assert.deepEqual(releaseAttempt(eighth, 'account'), { count: 7, windowStart: T0, lockedUntil: null });
+    const ninth = { count: 9, windowStart: T0, lockedUntil: T0 + LOCK_DURATION_MS };
+    assert.deepEqual(releaseAttempt(ninth, 'account'), { count: 8, windowStart: T0, lockedUntil: T0 + LOCK_DURATION_MS }, 'still at the limit');
+    assert.equal(releaseAttempt({ count: 0, windowStart: T0, lockedUntil: null }, 'ip').count, 0);
   });
 
   it('does not change the entry it is given', () => {

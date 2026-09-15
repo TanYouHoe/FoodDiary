@@ -44,3 +44,21 @@ export function afterFailure(entry, nowMs, kind) {
   const lockedUntil = count >= LOCKOUT_LIMITS[kind] ? nowMs + LOCK_DURATION_MS : null;
   return { count, windowStart, lockedUntil };
 }
+
+// An attempt counts as a failure before its credential is checked, so
+// parallel attempts can never pass the limit together. entries: one per key
+// (or null), kinds: the matching 'account' | 'ip'.
+// Returns { allowed, entries }: refused (entries unchanged) when any key is
+// locked, else allowed with a failure reserved on every key.
+export function reserveAttempts(entries, kinds, nowMs) {
+  if (isAnyLocked(entries, nowMs)) return { allowed: false, entries };
+  return { allowed: true, entries: entries.map((entry, i) => afterFailure(entry, nowMs, kinds[i])) };
+}
+
+// A reserved failure given back after the credential proved right. A lock
+// stays only while the count is still at the limit.
+export function releaseAttempt(entry, kind) {
+  if (!entry) return null;
+  const count = Math.max(0, entry.count - 1);
+  return { count, windowStart: entry.windowStart, lockedUntil: count >= LOCKOUT_LIMITS[kind] ? entry.lockedUntil : null };
+}

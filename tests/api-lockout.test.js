@@ -22,6 +22,7 @@ describe('API lockout', () => {
   let server;
   let at;
   let clock = new Date('2026-09-16T10:00:00.000Z');
+  const google = { payload: null };
   const minutes = (n) => { clock = new Date(clock.getTime() + n * 60_000); };
   const call = (method, path, options = {}) => callApi(`${at}${path}`, method, options);
   const login = (email, password) => call('POST', '/auth/login', { body: { email, password } });
@@ -29,13 +30,21 @@ describe('API lockout', () => {
   before(async () => {
     dir = mkdtempSync(join(tmpdir(), 'fooddiary-lock-'));
     db = openDatabase(':memory:', { defaultTimeZone: KL });
-    const { app } = createApp({ db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: KL, now: () => clock, requireTotp: false });
+    const { app } = createApp({
+      db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: KL, now: () => clock, requireTotp: false,
+      verifyGoogle: async () => google.payload,
+    });
     await new Promise(resolve => { server = app.listen(0, resolve); });
     at = `http://127.0.0.1:${server.address().port}/api`;
     const reg = await call('POST', '/auth/register', {
       body: { name: 'Amy', email: 'amy@lock.test', password: 'right', invite_code: inviteCode(db, { now: clock }) },
     });
     assert.equal(reg.status, 201);
+    // A real account, so every wrong password waits on bcrypt and parallel requests overlap.
+    const burst = await call('POST', '/auth/register', {
+      body: { name: 'Burst', email: 'burst@lock.test', password: 'right', invite_code: inviteCode(db, { now: clock }) },
+    });
+    assert.equal(burst.status, 201);
   });
 
   after(async () => {
@@ -55,6 +64,13 @@ describe('API lockout', () => {
 
     minutes(15);
     assert.equal((await login('amy@lock.test', 'right')).status, 200, 'the lock ended');
+  });
+
+  it('login: 12 concurrent wrong passwords for one email check at most 8', async () => {
+    const results = await Promise.all(Array.from({ length: 12 }, () => login('burst@lock.test', 'x')));
+    const statuses = results.map(r => r.status).sort();
+    assert.deepEqual(statuses, [...Array(8).fill(401), ...Array(4).fill(429)]);
+    assert.equal(db.prepare("SELECT count FROM auth_failures WHERE key = 'account:email:burst@lock.test'").get().count, 8);
   });
 
   it('login: a success clears the account count but not the IP count', async () => {
@@ -97,6 +113,18 @@ describe('API lockout', () => {
     const body = (invite_code) => ({ name: 'X', email: 'x@lock.test', password: 'pw', invite_code });
     for (let i = 0; i < 20; i++) assert.equal((await call('POST', '/auth/register', { body: body('bad') })).status, 403);
     assert.deepEqual(await call('POST', '/auth/register', { body: body(inviteCode(db, { now: clock })) }), LOCKED);
+  });
+
+  it('google sign-up: 20 refused invites lock the IP before the invite is checked', async () => {
+    google.payload = { email: 'new@lock.test', name: 'New', email_verified: true };
+    const body = (invite_code) => ({ credential: 'fake', invite_code });
+    for (let i = 0; i < 20; i++) {
+      assert.deepEqual(await call('POST', '/auth/google', { body: body('bad') }), { status: 403, body: { error: 'A valid invite is required' } });
+    }
+    assert.deepEqual(await call('POST', '/auth/google', { body: body(inviteCode(db, { now: clock })) }), LOCKED);
+    assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users WHERE email = 'new@lock.test'").get().c, 0);
+    minutes(16);
+    assert.equal((await call('POST', '/auth/google', { body: body(inviteCode(db, { now: clock })) })).status, 201, 'the lock ended');
   });
 
   it('invite check: 20 invalid codes lock the IP', async () => {
