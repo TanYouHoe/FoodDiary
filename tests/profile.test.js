@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   getMealPeriod, getDayOfWeek, getCalendarDate, isValidTimeZone, resolveTimeZone, shouldStoreTimeZone,
   canonicalTimeZone, zoneReader, startOfDayInstant, shiftCalendarDate, TIME_ZONE_CHANGE_INTERVAL_MS,
+  localDateTimeToInstant,
 } from '../logic/meal-period.js';
 import { buildProfileRows } from '../logic/profile.js';
 import { openDatabase } from '../server/db.js';
@@ -142,6 +143,11 @@ describe('shouldStoreTimeZone', () => {
     assert.equal(shouldStoreTimeZone({ header: 'UTC', stored: KL, storedAt: hoursAgo(6.01), now }), true);
     assert.equal(shouldStoreTimeZone({ header: 'UTC', stored: KL, storedAt: null, now }), true);
   });
+
+  it('changes a stored zone whose stored time cannot be read', () => {
+    assert.equal(shouldStoreTimeZone({ header: 'UTC', stored: KL, storedAt: 'not a time', now }), true);
+    assert.equal(shouldStoreTimeZone({ header: 'UTC', stored: KL, storedAt: '', now }), true);
+  });
 });
 
 describe('shiftCalendarDate', () => {
@@ -150,6 +156,32 @@ describe('shiftCalendarDate', () => {
     assert.equal(shiftCalendarDate('2026-03-01', -1), '2026-02-28');
     assert.equal(shiftCalendarDate('2026-12-31', 1), '2027-01-01');
     assert.equal(shiftCalendarDate('2026-03-29', 0), '2026-03-29');
+  });
+});
+
+describe('localDateTimeToInstant', () => {
+  it('reads a zone-less date-time as wall-clock time in the zone', () => {
+    assert.equal(localDateTimeToInstant('2026-03-29T12:30:00', KL), '2026-03-29T04:30:00.000Z');
+    assert.equal(localDateTimeToInstant('2026-03-29T12:30', KL), '2026-03-29T04:30:00.000Z');
+    assert.equal(localDateTimeToInstant('2026-03-29 12:30:00', 'UTC'), '2026-03-29T12:30:00.000Z');
+    assert.equal(localDateTimeToInstant('2026-03-29T12:30:00.250', 'UTC'), '2026-03-29T12:30:00.250Z');
+    assert.equal(localDateTimeToInstant('2026-03-29', KL), '2026-03-28T16:00:00.000Z');
+  });
+
+  it('takes the earlier offset for a repeated time and moves a skipped time an hour early', () => {
+    // New York repeats 01:00-02:00 on 2026-11-01 and skips 02:00-03:00 on 2026-03-08.
+    assert.equal(localDateTimeToInstant('2026-11-01T01:30:00', 'America/New_York'), '2026-11-01T05:30:00.000Z');
+    assert.equal(localDateTimeToInstant('2026-03-08T02:30:00', 'America/New_York'), '2026-03-08T06:30:00.000Z');
+  });
+
+  it('returns null for anything that is not a zone-less date-time', () => {
+    for (const text of ['2026-03-29T12:30:00Z', '2026-03-29T12:30:00+08:00', 'garbage', '', '2026-02-30T12:00:00', '2026-03-29T24:00:00', null, 42]) {
+      assert.equal(localDateTimeToInstant(text, KL), null, String(text));
+    }
+  });
+
+  it('throws for an invalid zone', () => {
+    assert.throws(() => localDateTimeToInstant('2026-03-29T12:30:00', 'Nowhere'), RangeError);
   });
 });
 
@@ -277,7 +309,7 @@ describe('rebuildProfile', () => {
     .run(place, userId, rating, visitedAt);
 
   beforeEach(() => {
-    db = openDatabase(':memory:');
+    db = openDatabase(':memory:', { defaultTimeZone: 'UTC' });
     alice = addUser('alice');
     bob = addUser('bob');
     place = db.prepare('INSERT INTO restaurants (name, price_range, added_by) VALUES (?, ?, ?)').run('Place', 2, alice).lastInsertRowid;

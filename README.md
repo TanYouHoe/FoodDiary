@@ -178,7 +178,7 @@ Two algorithms, selected by the `type` query param on `/api/suggest`. The rules 
 
 Meal periods (from [`logic/meal-period.js`](logic/meal-period.js), by hour of `visited_at` in the user's time zone — the browser sends it as `X-Time-Zone`, the server stores it on the user, and `DEFAULT_TIME_ZONE` covers users it has not heard from): `breakfast` (<11), `lunch` (11–15), `tea` (15–17), `dinner` (17–21), `supper` (≥21).
 
-The profile (`user_meal_profiles`) is **rebuilt automatically** on every meal create / update / delete. `buildProfileRows` ([`logic/profile.js`](logic/profile.js)) computes, per (day-of-week, meal-period), the average price range, adventure ratio, average rating, meal frequency (per week), group ratio, and total meals.
+The profile (`user_meal_profiles`) is **rebuilt automatically** on every meal create / update / delete, and when the user's stored time zone changes. The rebuild after a zone change runs after the response, so the very next request may still see the old profile. `buildProfileRows` ([`logic/profile.js`](logic/profile.js)) computes, per (day-of-week, meal-period), the average price range, adventure ratio, average rating, meal frequency (per week), group ratio, and total meals.
 
 ## Data & storage
 

@@ -26,6 +26,8 @@ export function suggestRoutes({ db, now, rng, groupAllowed }) {
   return r;
 }
 
+// Note: after a time zone change the profile is rebuilt after that response
+// (server/auth.js), so the very next request may still see the old profile.
 export function profileRoutes({ db }) {
   const r = Router();
   r.get('/', (req, res) => res.json(listProfile(db, req.user.id)));

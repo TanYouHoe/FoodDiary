@@ -35,7 +35,7 @@ before(async () => {
   tmp = mkdtempSync(join(tmpdir(), 'fooddiary-test-'));
   const { openDatabase } = await import('../server/db.js');
   const { createApp } = await import('../server/app.js');
-  const db = openDatabase(':memory:');
+  const db = openDatabase(':memory:', { defaultTimeZone: 'Asia/Kuala_Lumpur' });
   const { app } = createApp({ db, uploadsDir: tmp, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur' });
   await new Promise(resolve => { server = app.listen(0, resolve); });
   base = `http://127.0.0.1:${server.address().port}/api`;
@@ -375,7 +375,7 @@ describe('API ownership and access', () => {
     dir = mkdtempSync(join(tmpdir(), 'fooddiary-own-'));
     const { openDatabase, promoteOwner } = await import('../server/db.js');
     const { createApp } = await import('../server/app.js');
-    db = openDatabase(':memory:');
+    db = openDatabase(':memory:', { defaultTimeZone: 'Asia/Kuala_Lumpur' });
     const { app } = createApp({
       db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur', verifyGoogle: async () => google.payload,
     });

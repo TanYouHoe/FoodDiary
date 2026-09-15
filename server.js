@@ -30,16 +30,17 @@ if (problems.length > 0) {
 const PORT = Number(process.env.PORT) || 3004;
 const JWT_SECRET = process.env.JWT_SECRET || DEV_JWT_SECRET;
 const UPLOADS_DIR = join(__dirname, 'uploads');
+const TIME_ZONE = process.env.DEFAULT_TIME_ZONE ?? DEFAULT_TIME_ZONE;
 
 mkdirSync(UPLOADS_DIR, { recursive: true });
-const db = openDatabase(join(__dirname, 'fooddiary.db'));
+const db = openDatabase(join(__dirname, 'fooddiary.db'), { defaultTimeZone: TIME_ZONE });
 const { app } = createApp({
   db,
   uploadsDir: UPLOADS_DIR,
   distDir: join(__dirname, 'dist'),
   jwtSecret: JWT_SECRET,
   googleClientId: process.env.GOOGLE_CLIENT_ID,
-  defaultTimeZone: process.env.DEFAULT_TIME_ZONE ?? DEFAULT_TIME_ZONE,
+  defaultTimeZone: TIME_ZONE,
   log,
 });
 

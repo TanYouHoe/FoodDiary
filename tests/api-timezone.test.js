@@ -31,7 +31,7 @@ describe('API time zones', () => {
 
   before(async () => {
     dir = mkdtempSync(join(tmpdir(), 'fooddiary-tz-'));
-    db = openDatabase(':memory:');
+    db = openDatabase(':memory:', { defaultTimeZone: KL });
     const { app } = createApp({
       db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: KL,
       now: () => clock, rng: () => 0.99,

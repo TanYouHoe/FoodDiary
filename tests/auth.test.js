@@ -27,7 +27,7 @@ describe('makeAuthenticate time zone change', () => {
   };
 
   beforeEach(() => {
-    db = openDatabase(':memory:');
+    db = openDatabase(':memory:', { defaultTimeZone: 'Asia/Kuala_Lumpur' });
     userId = db.prepare("INSERT INTO users (name, email, password_hash) VALUES ('A', 'a@test.com', 'hash')").run().lastInsertRowid;
     rebuilds = [];
   });

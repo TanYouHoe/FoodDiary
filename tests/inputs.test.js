@@ -42,11 +42,20 @@ describe('group ids in meal and planned input', () => {
       assert.equal(toMealPatch({ visited_at }).value.fields.visited_at, UTC, visited_at);
     }
     assert.equal(checkNewMeal({ ...meal, visited_at: '2026-03-29T12:30:00+08:00' }).value.visited_at, '2026-03-29T04:30:00.000Z');
-    for (const visited_at of ['2026-09-01T12:00:00', '2026-09-01', '2026-09-01 12:00']) {
+    assert.equal(checkNewMeal({ ...meal, visited_at: '2026-09-01T12:00:00.123456Z' }).value.visited_at, '2026-09-01T12:00:00.123Z');
+    // A well-formed date-time with no zone at all is told what is missing.
+    for (const visited_at of ['2026-09-01T12:00:00', '2026-09-01T12:00:00.500']) {
       assert.deepEqual(checkNewMeal({ ...meal, visited_at }), NO_ZONE, visited_at);
       assert.deepEqual(toMealPatch({ visited_at }), NO_ZONE, visited_at);
     }
-    for (const visited_at of ['garbage', 'not a dateZ', '2026-13-45T99:00:00Z', 12345, {}]) {
+    // Anything else, including an offset in the wrong shape or an impossible date, is invalid.
+    for (const visited_at of [
+      'garbage', 'not a dateZ', '2026-13-45T99:00:00Z', 12345, {},
+      '2026-02-30T12:00:00Z', '2026-02-30T12:00:00', '2026-09-01T24:00:00Z',
+      'Tue, 01 Sep 2026 12:00:00 +0800', 'Tue, 01 Sep 2026 12:00:00 GMT',
+      '2026-09-01T12:00:00+0800', '2026-09-01T12:00:00+08', '2026-09-01T12:00:00+25:00', '2026-09-01T12:00:00+08:60',
+      '2026-09-01T12:00Z', '2026-09-01', '2026-09-01 12:00', '2026-09-01 12:00:00Z',
+    ]) {
       assert.deepEqual(checkNewMeal({ ...meal, visited_at }), INVALID, String(visited_at));
       assert.deepEqual(toMealPatch({ visited_at }), INVALID, String(visited_at));
     }

@@ -170,7 +170,7 @@ describe('suggestMeal', () => {
   `).run(userId, adventureRatio, totalMeals);
 
   beforeEach(() => {
-    db = openDatabase(':memory:');
+    db = openDatabase(':memory:', { defaultTimeZone: 'UTC' });
     userId = db.prepare("INSERT INTO users (name, email, password_hash) VALUES ('Alice', 'a@test.com', 'hash')").run().lastInsertRowid;
     const addRestaurant = db.prepare('INSERT INTO restaurants (name, cuisine_type, price_range, added_by) VALUES (?, ?, ?, ?)');
     addRestaurant.run('Fav Chinese', 'Chinese', 2, userId);   // 1

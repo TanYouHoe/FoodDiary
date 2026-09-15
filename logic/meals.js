@@ -1,6 +1,7 @@
 // Logic: the rules for creating and changing a meal, and for its photos.
 
 import { parseGroupId } from './accounts.js';
+import { wallClockMs } from './meal-period.js';
 
 export const PHOTO_TYPE = /^image\/(jpeg|png|webp)$/;
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
@@ -12,17 +13,27 @@ export const isAcceptedPhotoType = (mimeType) => PHOTO_TYPE.test(mimeType);
 // A wider budget on the client, so it never refuses a file the server takes.
 export const isImageFile = (file) => file.type.startsWith('image/');
 
-// A visit time is an instant: it must parse and name its zone ('Z' or ±HH:MM),
-// or its meal period would depend on the machine that reads it. The value is
+// A visit time is an instant: a strict ISO 8601 date-time with seconds, an
+// optional fraction, and 'Z' or ±HH:MM, or its meal period would depend on the
+// machine that reads it. An impossible date or time is refused. The value is
 // returned as a UTC ISO string, so stored visit times sort as text in time order.
-const ENDS_WITH_ZONE = /(Z|[+-]\d{2}:\d{2})$/i;
+const DATE_TIME = '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?';
+const ZONED_VISIT_TIME = new RegExp(`^(${DATE_TIME})(?:Z|([+-])(\\d{2}):(\\d{2}))$`);
+const ZONELESS_VISIT_TIME = new RegExp(`^${DATE_TIME}$`);
+const INVALID_VISIT_TIME = { ok: false, error: 'Invalid visit time' };
 
 export function checkVisitTime(visitedAt) {
-  if (typeof visitedAt !== 'string' || Number.isNaN(Date.parse(visitedAt))) {
-    return { ok: false, error: 'Invalid visit time' };
+  if (typeof visitedAt !== 'string') return INVALID_VISIT_TIME;
+  if (ZONELESS_VISIT_TIME.test(visitedAt)) {
+    return wallClockMs(visitedAt) === null ? INVALID_VISIT_TIME : { ok: false, error: 'Visit time must include a time zone' };
   }
-  if (!ENDS_WITH_ZONE.test(visitedAt)) return { ok: false, error: 'Visit time must include a time zone' };
-  return { ok: true, value: new Date(visitedAt).toISOString() };
+  const m = ZONED_VISIT_TIME.exec(visitedAt);
+  if (!m) return INVALID_VISIT_TIME;
+  const wall = wallClockMs(m[1]);
+  const [sign, offsetHours, offsetMinutes] = [m[2], Number(m[3] ?? 0), Number(m[4] ?? 0)];
+  if (wall === null || offsetHours > 23 || offsetMinutes > 59) return INVALID_VISIT_TIME;
+  const offsetMs = (sign === '-' ? -1 : 1) * (offsetHours * 60 + offsetMinutes) * 60000;
+  return { ok: true, value: new Date(wall - offsetMs).toISOString() };
 }
 
 export function checkNewMeal(body) {

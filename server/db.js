@@ -1,9 +1,11 @@
 // Connector: opens the SQLite database, applies the schema, runs the
-// idempotent migrations and seeds the built-in catalogue rows.
+// idempotent migrations and one-time data conversions, and seeds the
+// built-in catalogue rows.
 
 import Database from 'better-sqlite3';
 import { SEED_MEAL_TYPES, SEED_DISH_TYPE_NAMES } from '../logic/catalog.js';
 import { USER_ROLES, ownerToPromote } from '../logic/access.js';
+import { isValidTimeZone, localDateTimeToInstant } from '../logic/meal-period.js';
 
 const ROLE_LIST = Object.values(USER_ROLES).map(role => `'${role}'`).join(',');
 
@@ -105,6 +107,11 @@ const SCHEMA = `
     updated_at TEXT DEFAULT (datetime('now')),
     UNIQUE(user_id, day_of_week, meal_period)
   );
+
+  CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
 `;
 
 function hasColumn(db, table, column) {
@@ -144,6 +151,24 @@ function migrate(db) {
   }
 }
 
+const VISIT_TIMES_IN_UTC = 'visit_times_in_utc';
+
+// Runs once per database: meals stored before visit times carried a zone are
+// rewritten as UTC, read in the default zone (logic/meal-period.js converts).
+// A value logic cannot read as a zone-less date-time is left as it is.
+function convertZonelessVisitTimes(db, defaultTimeZone) {
+  if (db.prepare('SELECT 1 FROM meta WHERE key = ?').get(VISIT_TIMES_IN_UTC)) return;
+  const meals = db.prepare('SELECT id, visited_at FROM meals').all();
+  const setVisitedAt = db.prepare('UPDATE meals SET visited_at = ? WHERE id = ?');
+  db.transaction(() => {
+    for (const meal of meals) {
+      const instant = localDateTimeToInstant(meal.visited_at, defaultTimeZone);
+      if (instant !== null) setVisitedAt.run(instant, meal.id);
+    }
+    db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(VISIT_TIMES_IN_UTC, defaultTimeZone);
+  })();
+}
+
 function seed(db) {
   if (db.prepare('SELECT COUNT(*) as c FROM meal_types').get().c === 0) {
     const insert = db.prepare('INSERT INTO meal_types (name, cuisine_type, slots, is_seed) VALUES (?, ?, ?, 1)');
@@ -166,13 +191,16 @@ export function promoteOwner(db) {
   if (id != null) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(USER_ROLES.owner, id);
 }
 
-// path: a file path or ':memory:'
-export function openDatabase(path) {
+// path: a file path or ':memory:'. defaultTimeZone: the IANA zone old zone-less
+// visit times are read in.
+export function openDatabase(path, { defaultTimeZone } = {}) {
+  if (!isValidTimeZone(defaultTimeZone)) throw new Error(`openDatabase: defaultTimeZone must be an IANA time zone, got ${defaultTimeZone}`);
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
   migrate(db);
+  convertZonelessVisitTimes(db, defaultTimeZone);
   seed(db);
   promoteOwner(db);
   return db;
