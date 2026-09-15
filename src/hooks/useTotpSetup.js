@@ -12,9 +12,9 @@ export function useTotpSetup() {
   const [code, setCode] = useState('');
   const qrDataUrl = useQrCode(setup?.otpauthUrl);
 
-  // currentCode: a code from the enabled factor, when replacing it.
-  const start = async (currentCode) => {
-    setSetup(await api.setupTotp(currentCode));
+  // proof: { code } or { backupCode } for the enabled factor, when replacing it.
+  const start = async (proof) => {
+    setSetup(await api.setupTotp(proof));
     setCode('');
   };
 

@@ -63,6 +63,11 @@ describe('backup codes and prompts', () => {
     assert.match(currentCodePrompt(SECURITY_MODES.regenerateCode), /backup codes/);
     assert.equal(currentCodePrompt(SECURITY_MODES.idle), null);
   });
+  it('asks for a backup code instead when the user switches', () => {
+    assert.match(currentCodePrompt(SECURITY_MODES.replaceCode, true), /backup code.*replace/);
+    assert.match(currentCodePrompt(SECURITY_MODES.regenerateCode, true), /^Enter one of your backup codes/);
+    assert.match(currentCodePrompt(SECURITY_MODES.replaceCode, false), /authenticator app/);
+  });
 });
 
 describe('settingsTabs security', () => {

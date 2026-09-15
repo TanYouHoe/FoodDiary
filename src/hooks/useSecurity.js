@@ -16,6 +16,7 @@ export function useSecurity({ enabled, showUsers }) {
   const copy = useCopy();
   const [mode, setMode] = useState(SECURITY_MODES.idle);
   const [currentCode, setCurrentCode] = useState('');
+  const [useBackup, setUseBackup] = useState(false); // the current-code field takes a backup code
   const [backupCodes, setBackupCodes] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -56,9 +57,17 @@ export function useSecurity({ enabled, showUsers }) {
     setMode(SECURITY_MODES.codes);
   };
 
+  const askCurrentCode = (nextMode) => {
+    setError('');
+    setCurrentCode('');
+    setUseBackup(false);
+    setMode(nextMode);
+  };
+
   const cancel = () => {
     totp.clear();
     setCurrentCode('');
+    setUseBackup(false);
     setError('');
     setMode(SECURITY_MODES.idle);
   };
@@ -66,21 +75,22 @@ export function useSecurity({ enabled, showUsers }) {
   const replace = () => {
     setError('');
     if (user.totp_enabled) {
-      setCurrentCode('');
-      setMode(SECURITY_MODES.replaceCode);
+      askCurrentCode(SECURITY_MODES.replaceCode);
     } else {
       run(async () => { await totp.start(); setMode(SECURITY_MODES.setup); });
     }
   };
 
   const submitCurrentCode = () => run(async () => {
+    const proof = useBackup ? { backupCode: currentCode } : { code: currentCode };
     if (mode === SECURITY_MODES.replaceCode) {
-      await totp.start(currentCode);
+      await totp.start(proof);
       setMode(SECURITY_MODES.setup);
     } else {
-      showCodes(await api.regenerateBackupCodes(currentCode));
+      showCodes(await api.regenerateBackupCodes(proof));
     }
     setCurrentCode('');
+    setUseBackup(false);
   });
 
   // The popup stays open, so the new session is adopted at once.
@@ -105,6 +115,7 @@ export function useSecurity({ enabled, showUsers }) {
     state: toSecurityState(user),
     mode,
     currentCode,
+    useBackup,
     error,
     busy,
     setup: {
@@ -129,8 +140,9 @@ export function useSecurity({ enabled, showUsers }) {
     usersLoading,
     confirmResetId,
     onReplace: replace,
-    onRegenerate: () => { setError(''); setCurrentCode(''); setMode(SECURITY_MODES.regenerateCode); },
+    onRegenerate: () => askCurrentCode(SECURITY_MODES.regenerateCode),
     onCurrentCode: setCurrentCode,
+    onToggleBackup: () => { setCurrentCode(''); setUseBackup(b => !b); },
     onSubmitCurrentCode: submitCurrentCode,
     onCancel: cancel,
     onLogoutAll: logoutAll,

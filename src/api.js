@@ -66,6 +66,12 @@ function parsePhotoUrls(value) {
 
 const toMeal = ({ photo_urls, ...meal }) => ({ ...meal, photos: parsePhotoUrls(photo_urls) });
 
+// { code } or { backupCode } (or nothing) as the request body the server reads.
+function factorBody({ code, backupCode } = {}) {
+  if (backupCode) return { backup_code: backupCode };
+  return code ? { code } : {};
+}
+
 export const api = {
   // Auth
   register: (data) => send('POST', `${API}/auth/register`, data),
@@ -76,16 +82,17 @@ export const api = {
   verifyMfa: (data) => send('POST', `${API}/auth/mfa`, data),
   logoutAll: () => request(`${API}/auth/logout-all`, { method: 'POST' }),
 
-  // Two-factor. currentCode: needed only when replacing an enabled factor.
-  setupTotp: async (currentCode) => {
-    const body = await send('POST', `${API}/auth/totp/setup`, currentCode ? { code: currentCode } : {});
+  // Two-factor. proof: { code } or { backupCode }, needed only when replacing an enabled factor.
+  setupTotp: async (proof) => {
+    const body = await send('POST', `${API}/auth/totp/setup`, factorBody(proof));
     return { secret: body.secret, otpauthUrl: body.otpauth_url };
   },
   enableTotp: async (code) => {
     const body = await send('POST', `${API}/auth/totp/enable`, { code });
     return { backupCodes: body.backup_codes, token: body.token, user: body.user };
   },
-  regenerateBackupCodes: async (code) => (await send('POST', `${API}/auth/totp/backup-codes`, { code })).backup_codes,
+  // proof: { code } or { backupCode }.
+  regenerateBackupCodes: async (proof) => (await send('POST', `${API}/auth/totp/backup-codes`, factorBody(proof))).backup_codes,
 
   // Users (owner)
   getUsers: () => request(`${API}/users`),

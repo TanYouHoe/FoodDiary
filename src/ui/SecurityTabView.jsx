@@ -9,10 +9,10 @@ import BackupCodesPanel from './BackupCodesPanel.jsx';
 import { SECURITY_MODES, currentCodePrompt } from './two-factor.js';
 
 export default function SecurityTabView({
-  state, mode, currentCode, error, busy, setup, backup, showUsers, userRows, usersLoading, confirmResetId,
-  onReplace, onRegenerate, onCurrentCode, onSubmitCurrentCode, onCancel, onLogoutAll, onAskReset, onCancelReset, onReset,
+  state, mode, currentCode, useBackup, error, busy, setup, backup, showUsers, userRows, usersLoading, confirmResetId,
+  onReplace, onRegenerate, onCurrentCode, onToggleBackup, onSubmitCurrentCode, onCancel, onLogoutAll, onAskReset, onCancelReset, onReset,
 }) {
-  const prompt = currentCodePrompt(mode);
+  const prompt = currentCodePrompt(mode, useBackup);
   return (
     <>
       {error && mode !== SECURITY_MODES.setup && <div className="error-message">{error}</div>}
@@ -42,11 +42,23 @@ export default function SecurityTabView({
           <form onSubmit={(e) => { e.preventDefault(); onSubmitCurrentCode(); }} className="login-form">
             <div className="form-group">
               <label htmlFor="security-current-code">{prompt}</label>
-              <input
-                id="security-current-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={7}
-                value={currentCode} onChange={(e) => onCurrentCode(e.target.value)} required placeholder="123456" autoFocus
-              />
+              {useBackup ? (
+                <input
+                  key="backup" id="security-current-code" type="text" autoComplete="off" autoCapitalize="none" spellCheck={false}
+                  value={currentCode} onChange={(e) => onCurrentCode(e.target.value)} required placeholder="xxxx-xxxx" autoFocus
+                />
+              ) : (
+                <input
+                  key="code" id="security-current-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={7}
+                  value={currentCode} onChange={(e) => onCurrentCode(e.target.value)} required placeholder="123456" autoFocus
+                />
+              )}
             </div>
+            <p className="login-register-link">
+              <button type="button" className="link-btn" onClick={onToggleBackup}>
+                {useBackup ? 'Use the authenticator app' : 'Use a backup code'}
+              </button>
+            </p>
             <div className="modal-actions">
               <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
               <button type="submit" className="btn-primary" disabled={busy}>{busy ? 'Checking...' : 'Continue'}</button>

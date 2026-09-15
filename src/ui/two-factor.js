@@ -50,8 +50,10 @@ export const SECURITY_MODES = {
 };
 
 // The prompt above the current-code field, or null when no code is asked for.
-export function currentCodePrompt(mode) {
-  if (mode === SECURITY_MODES.replaceCode) return 'Enter a current code from your authenticator app to replace it.';
-  if (mode === SECURITY_MODES.regenerateCode) return 'Enter a current code to make new backup codes. The old backup codes stop working.';
+// useBackup: the field takes a backup code (it is spent) instead of a current code.
+export function currentCodePrompt(mode, useBackup = false) {
+  const proof = useBackup ? 'one of your backup codes (it is used up)' : 'a current code from your authenticator app';
+  if (mode === SECURITY_MODES.replaceCode) return `Enter ${proof} to replace the authenticator.`;
+  if (mode === SECURITY_MODES.regenerateCode) return `Enter ${proof} to make new backup codes. The old backup codes stop working.`;
   return null;
 }
