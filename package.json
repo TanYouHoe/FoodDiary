@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "server": "node server.js",
-    "server:dev": "node --watch server.js",
+    "server": "node --env-file-if-exists=.env server.js",
+    "server:dev": "node --env-file-if-exists=.env --watch server.js",
     "test": "node --test \"tests/**/*.test.js\""
   },
   "dependencies": {

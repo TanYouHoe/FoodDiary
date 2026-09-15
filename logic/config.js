@@ -16,6 +16,59 @@ export const DEFAULT_TIME_ZONE = 'Asia/Kuala_Lumpur';
 export const DEFAULT_PORT = 3004;
 export const DEV_ORIGIN = `http://localhost:${DEFAULT_PORT}`;
 
+// The address the server listens on when HOST is not set: this machine only.
+// A proxy on the same machine (cloudflared) reaches it; the network does not.
+export const DEFAULT_HOST = '127.0.0.1';
+
+const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const HOST_NAME = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+
+const isIPv4 = (value) => IPV4.test(value);
+
+function isIPv6(value) {
+  const halves = value.split('::');
+  if (halves.length > 2) return false;
+  const groups = halves.flatMap(part => (part === '' ? [] : part.split(':')));
+  if (!groups.every(group => /^[0-9a-f]{1,4}$/i.test(group))) return false;
+  return halves.length === 2 ? groups.length <= 7 : groups.length === 8;
+}
+
+// An IP address, or a host name. All-digit names must be a real IPv4 address.
+export function isValidHost(value) {
+  if (typeof value !== 'string') return false;
+  if (isIPv4(value) || isIPv6(value)) return true;
+  return !/^[\d.]+$/.test(value) && HOST_NAME.test(value);
+}
+
+// An IP address, or an address with a /prefix of the right size.
+function isIpOrCidr(value) {
+  const [address, prefix, extra] = value.split('/');
+  if (extra !== undefined) return false;
+  const bits = isIPv4(address) ? 32 : isIPv6(address) ? 128 : 0;
+  if (bits === 0) return false;
+  return prefix === undefined || (/^\d{1,3}$/.test(prefix) && Number(prefix) <= bits);
+}
+
+// TRUST_PROXY as set, or undefined. Which proxies may name the client's IP in
+// X-Forwarded-For: none (unset or empty), 'loopback' (a proxy on this
+// machine), a hop count, or a comma-separated list of IPs or CIDR ranges.
+// 'true' (trust anyone) is refused: any client could then choose its own IP
+// and escape the lockout. Returns { ok, value } with Express's trust proxy value.
+export function parseTrustProxy(value) {
+  if (value === undefined || value === '') return { ok: true, value: false };
+  if (value === 'loopback') return { ok: true, value: 'loopback' };
+  if (/^\d+$/.test(value)) return { ok: true, value: Number(value) };
+  const entries = value.split(',').map(entry => entry.trim());
+  if (entries.every(isIpOrCidr)) return { ok: true, value: entries };
+  return { ok: false, error: "TRUST_PROXY must be 'loopback', a hop count, or a comma-separated list of IPs or CIDR ranges." };
+}
+
+// HOST and PORT as set, or undefined; checked by checkServerConfig first.
+export const listenHost = (host) => host ?? DEFAULT_HOST;
+export const listenPort = (port) => (port === undefined ? DEFAULT_PORT : Number(port));
+
+const isValidPort = (port) => /^\d{1,5}$/.test(port) && Number(port) >= 1 && Number(port) <= 65535;
+
 // The protocol ('http:', 'https:', ...) when value is a bare origin (a
 // trailing slash is allowed, a path is not), else null.
 function originProtocol(value) {
@@ -40,9 +93,14 @@ export function shouldRequireTotp({ requireTotp, nodeEnv }) {
 // defaultTimeZone: DEFAULT_TIME_ZONE as set, or undefined;
 // publicOrigin: PUBLIC_ORIGIN as set, or undefined. Account invite links are
 // built on it, so production needs it, over https; elsewhere http also works.
+// host, port, trustProxy: HOST, PORT, TRUST_PROXY as set, or undefined.
 // Returns a list of problems; an empty list means the server may start.
-export function checkServerConfig({ nodeEnv, jwtSecret, defaultTimeZone, publicOrigin, requireTotp }) {
+export function checkServerConfig({ nodeEnv, jwtSecret, defaultTimeZone, publicOrigin, requireTotp, host, port, trustProxy }) {
   const problems = [];
+  if (host !== undefined && !isValidHost(host)) problems.push(`HOST must be an IP address or a host name, such as ${DEFAULT_HOST}.`);
+  if (port !== undefined && !isValidPort(port)) problems.push('PORT must be a whole number from 1 to 65535.');
+  const trust = parseTrustProxy(trustProxy);
+  if (!trust.ok) problems.push(trust.error);
   if (requireTotp !== undefined && requireTotp !== '1' && requireTotp !== '0') {
     problems.push("REQUIRE_TOTP must be '1' or '0'.");
   }

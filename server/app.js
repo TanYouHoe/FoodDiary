@@ -4,7 +4,8 @@
 
 import express from 'express';
 import cors from 'cors';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
+import { isAllowedOrigin, securityHeaders, cacheControlFor } from '../logic/http-policy.js';
 import { makeTokens, makeAuthenticate, verifyGoogleCredential } from './auth.js';
 import { makeUpload, isUploadError } from './uploads.js';
 import { makeGroupAccess } from './guards.js';
@@ -40,6 +41,8 @@ export function createApp({
   defaultTimeZone,
   publicOrigin = null,
   requireTotp,
+  allowedOrigins = [], // from logic/http-policy.js allowedOrigins
+  trustProxy = false,  // from logic/config.js parseTrustProxy
 }) {
   if (!isValidTimeZone(defaultTimeZone)) throw new Error(`createApp: defaultTimeZone must be an IANA time zone, got ${defaultTimeZone}`);
   if (typeof requireTotp !== 'boolean') throw new Error(`createApp: requireTotp must be a boolean, got ${requireTotp}`);
@@ -64,11 +67,32 @@ export function createApp({
   const authenticate = makeAuthenticate({ db, tokens, defaultTimeZone, now, requireTotp, onTimeZoneChange: refreshProfile });
 
   const app = express();
-  app.use(cors());
-  app.use(express.json());
+  // req.ip is the client named by a trusted proxy, so the lockout keys by the real IP.
+  app.set('trust proxy', trustProxy);
 
-  app.use('/uploads', express.static(uploadsDir));
-  if (distDir) app.use(express.static(distDir));
+  const headers = securityHeaders({ publicOrigin });
+  app.use((req, res, next) => { res.set(headers); next(); });
+
+  // CORS headers only for an allowed Origin; any other origin gets none, and
+  // its preflight is not approved. Every answer varies by Origin for caches.
+  const allowCors = cors({ origin: true });
+  app.use((req, res, next) => {
+    res.vary('Origin');
+    return isAllowedOrigin(req.get('Origin'), allowedOrigins) ? allowCors(req, res, next) : next();
+  });
+
+  app.use(express.json({ limit: '1mb' }));
+
+  app.use('/uploads', express.static(uploadsDir, { dotfiles: 'deny', index: false }));
+  const setCacheControl = (res, relativePath) => {
+    const value = cacheControlFor(relativePath);
+    if (value) res.setHeader('Cache-Control', value);
+  };
+  if (distDir) {
+    app.use(express.static(distDir, {
+      setHeaders: (res, filePath) => setCacheControl(res, relative(distDir, filePath).split(sep).join('/')),
+    }));
+  }
 
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
@@ -88,7 +112,12 @@ export function createApp({
   app.use('/api/profile', authenticate, profileRoutes({ db }));
 
   // SPA fallback
-  if (distDir) app.get('*splat', (req, res) => res.sendFile(join(distDir, 'index.html')));
+  if (distDir) {
+    app.get('*splat', (req, res) => {
+      setCacheControl(res, 'index.html');
+      res.sendFile(join(distDir, 'index.html'));
+    });
+  }
 
   // Last: every error becomes JSON. Upload limits and client errors the parser
   // marks as safe to show keep their 4xx; anything else is logged and hidden.

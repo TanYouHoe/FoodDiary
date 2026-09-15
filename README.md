@@ -75,17 +75,28 @@ The tests need no running server. `tests/api.test.js` builds the app on an in-me
 
 ### Environment variables
 
-| Var                     | Used by | Default                 | Description                                                              |
-| ----------------------- | ------- | ----------------------- | ---------------------------------------------------------------------- |
-| `PORT`                  | server  | `3004`                  | API / SPA listen port.                                                  |
-| `JWT_SECRET`            | server  | `food-diary-dev-secret` | HMAC secret for signing JWTs. **Set a real value in production** — the fallback is insecure. |
-| `GOOGLE_CLIENT_ID`      | server  | _(unset)_               | Google OAuth client ID; the audience that Google ID tokens are verified against. Required for Google Sign-In. |
-| `DEFAULT_TIME_ZONE`     | server  | `Asia/Kuala_Lumpur`     | IANA time zone for users whose browser has not sent one yet. The server refuses to start with an unknown zone. |
-| `PUBLIC_ORIGIN`         | server, `tools/create-invite.js` | _(request origin)_ / `http://localhost:3004` | Origin of account invite links, e.g. `https://food.example.com`. **Required in production, and must be https**; the server refuses to start otherwise. Outside production, http also works and an unset value uses the request's origin. |
-| `REQUIRE_TOTP`          | server  | `1` in production, else `0` | `1`: every account must bind an authenticator app before it can use the app. `0`: optional. Any other value stops the server. |
-| `VITE_GOOGLE_CLIENT_ID` | client  | _(unset)_               | Same client ID, exposed to the front end (read in `src/config.js`, used through `src/hooks/useGoogleButton.js`). Set in `.env`. If unset, the Google button is hidden. |
+| Var                     | Used by | Default                 | M6 value | Description                                                              |
+| ----------------------- | ------- | ----------------------- | -------- | ---------------------------------------------------------------------- |
+| `HOST`                  | server  | `127.0.0.1`             | `127.0.0.1` | Listen address. The default reaches this machine only; cloudflared on the same machine dials it. An IP address or host name, else the server refuses to start. |
+| `PORT`                  | server  | `3004`                  | `3115` | API / SPA listen port, 1–65535. |
+| `FOOD_DIARY_DATA_DIR`   | server, `tools/*` | _(unset)_     | `data` | Data directory: the database is `<dir>/fooddiary.db` and photos `<dir>/uploads`, created if missing. A relative path resolves against the app directory, not the working directory. Unset, the server uses `./fooddiary.db` and `./uploads`; the tools refuse to run without it or `--db`. |
+| `NODE_ENV`              | server  | _(unset)_               | `production` | `production` enforces the checks below and drops the Vite dev origin from CORS. |
+| `JWT_SECRET`            | server  | `food-diary-dev-secret` | a random value | HMAC secret for signing JWTs. **In production it must be set, at least 32 characters, and not the default**; the server refuses to start otherwise. |
+| `GOOGLE_CLIENT_ID`      | server  | _(unset)_               | the OAuth client ID | Google OAuth client ID; the audience that Google ID tokens are verified against. Required for Google Sign-In. |
+| `DEFAULT_TIME_ZONE`     | server, `tools/*` | `Asia/Kuala_Lumpur` | _(default)_ | IANA time zone for users whose browser has not sent one yet. The server refuses to start with an unknown zone. |
+| `PUBLIC_ORIGIN`         | server, `tools/create-invite.js` | _(request origin)_ / `http://localhost:3004` | `https://3393715fc3.slowmossriver.com` | The app's public origin: account invite links, the CORS allow-list, and HSTS when https. **Required in production, and must be https**; the server refuses to start otherwise. Outside production, http also works and an unset value uses the request's origin. |
+| `TRUST_PROXY`           | server  | _(unset: no proxy)_     | `loopback` | Proxies trusted to name the client IP in `X-Forwarded-For`, so the sign-in lockout counts the real IP: `loopback` (a proxy on this machine, such as cloudflared), a hop count, or a comma-separated IP/CIDR list. `true` and anything else stop the server: any client could then pick its own IP. |
+| `REQUIRE_TOTP`          | server  | `1` in production, else `0` | _(default: on)_ | `1`: every account must bind an authenticator app before it can use the app. `0`: optional. Any other value stops the server. |
+| `VITE_GOOGLE_CLIENT_ID` | client  | _(unset)_               | — | Same client ID, exposed to the front end (read in `src/config.js`, used through `src/hooks/useGoogleButton.js`). Set in `.env`. If unset, the Google button is hidden. |
 
-Server-side env vars (`PORT`, `JWT_SECRET`, `GOOGLE_CLIENT_ID`) come from the process environment. The client-side `VITE_GOOGLE_CLIENT_ID` is read from `.env` at build/dev time by Vite. A Google OAuth client and its `client_secret_*.json` are gitignored.
+`npm run server` and `npm run server:dev` load `.env` when it exists (`node --env-file-if-exists=.env`); variables already set in the environment win. Every server value is checked at start-up (`logic/config.js` `checkServerConfig`), and a bad value stops the server with a message. The client-side `VITE_GOOGLE_CLIENT_ID` is read from `.env` at build/dev time by Vite. A Google OAuth client and its `client_secret_*.json` are gitignored.
+
+### Public hardening
+
+- **CORS** — only `PUBLIC_ORIGIN` (plus `http://localhost:5176` outside production) gets CORS headers. Any other origin gets none, and its preflight is not approved. Same-origin requests need no CORS.
+- **Security headers** on every response: a Content-Security-Policy (`default-src 'self'`; scripts only from this origin, Google Identity Services and Google Maps, never inline or eval; inline styles allowed because React style attributes and Google's widgets need them; `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: geolocation=(self), camera=(), microphone=()`, `Cross-Origin-Opener-Policy: same-origin-allow-popups` (Google sign-in popups), and `Strict-Transport-Security` when `PUBLIC_ORIGIN` is https. The values are built in `logic/http-policy.js`.
+- **Caching** — `index.html` (also as the SPA fallback), `sw.js` and `manifest.webmanifest` are `no-cache`; hashed build files under `/assets/` are cached for a year (`immutable`).
+- **Body limit** — JSON bodies over 1 MB answer 413 with a JSON error.
 
 ## API
 
@@ -233,8 +244,8 @@ The profile (`user_meal_profiles`) is **rebuilt automatically** on every meal cr
 
 ## Data & storage
 
-- **Database** — a single SQLite file, `fooddiary.db`, in the project root. Opened with WAL journaling and foreign keys on. The schema is created idempotently (`CREATE TABLE IF NOT EXISTS`) on startup, with in-code migrations (`ALTER TABLE` guarded by `pragma_table_info` checks) and seeding of meal types and dish types when empty. The DB and its `-wal` / `-shm` sidecars are gitignored.
-- **Uploads** — photos are stored on disk under `uploads/` (created at startup) and served from `/uploads`. Accepted types: JPEG, PNG, WebP; max 5 MB per file. Restaurant cover = 1 photo; meals = up to 10 photos. Filenames are `<timestamp>-<original>`. The `uploads/` directory is gitignored.
+- **Database** — a single SQLite file, `fooddiary.db`, in the project root (or in `FOOD_DIARY_DATA_DIR`). Opened with WAL journaling and foreign keys on. The schema is created idempotently (`CREATE TABLE IF NOT EXISTS`) on startup, with in-code migrations (`ALTER TABLE` guarded by `pragma_table_info` checks) and seeding of meal types and dish types when empty. The DB and its `-wal` / `-shm` sidecars are gitignored.
+- **Uploads** — photos are stored on disk under `uploads/` (or `<FOOD_DIARY_DATA_DIR>/uploads`, created at startup) and served from `/uploads`. Accepted types: JPEG, PNG, WebP; max 5 MB per file. Restaurant cover = 1 photo; meals = up to 10 photos. The server names each file: 32 random hex characters plus `.jpg`, `.png` or `.webp` from the declared type — never the client's file name. After the upload the file's first bytes must match that type (JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, WebP `RIFF….WEBP`); otherwise every file of the request is deleted and the answer is 400 `{ error: 'Not a supported image' }`. `/uploads` never serves dot files or directory indexes, and the global `nosniff` header stops a browser from reading a photo as another type. Older `<timestamp>-<original>` names keep working. The `uploads/` directory is gitignored.
 
 ## Integration
 
