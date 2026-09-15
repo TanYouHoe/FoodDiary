@@ -2,8 +2,18 @@
 // maps response bodies into the shapes the screens use.
 
 import { getToken } from './token-store.js';
+import { MFA_ENROLL_REQUIRED } from '../logic/two-factor.js';
 
 const API = '/api';
+
+// Listeners told when the server answers that the user must set up an authenticator.
+const enrollListeners = new Set();
+
+// Returns a function that removes the listener.
+export function onEnrollRequired(listener) {
+  enrollListeners.add(listener);
+  return () => enrollListeners.delete(listener);
+}
 
 // Every request names the browser's IANA time zone, so the server reads meal
 // periods and weekdays where the user is.
@@ -22,8 +32,12 @@ async function request(url, options = {}) {
   });
   if (res.status === 204) return null;
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(err.error);
+    const body = await res.json().catch(() => ({ error: 'Request failed' }));
+    if (body.code === MFA_ENROLL_REQUIRED.code) enrollListeners.forEach(listener => listener());
+    const err = new Error(body.error);
+    err.status = res.status;
+    err.code = body.code;
+    throw err;
   }
   return res.json();
 }
@@ -58,6 +72,24 @@ export const api = {
   login: (data) => send('POST', `${API}/auth/login`, data),
   googleLogin: (credential, invite_code) => send('POST', `${API}/auth/google`, { credential, invite_code }),
   getMe: () => request(`${API}/auth/me`),
+  // data: { mfa_token, code } or { mfa_token, backup_code }.
+  verifyMfa: (data) => send('POST', `${API}/auth/mfa`, data),
+  logoutAll: () => request(`${API}/auth/logout-all`, { method: 'POST' }),
+
+  // Two-factor. currentCode: needed only when replacing an enabled factor.
+  setupTotp: async (currentCode) => {
+    const body = await send('POST', `${API}/auth/totp/setup`, currentCode ? { code: currentCode } : {});
+    return { secret: body.secret, otpauthUrl: body.otpauth_url };
+  },
+  enableTotp: async (code) => {
+    const body = await send('POST', `${API}/auth/totp/enable`, { code });
+    return { backupCodes: body.backup_codes, token: body.token, user: body.user };
+  },
+  regenerateBackupCodes: async (code) => (await send('POST', `${API}/auth/totp/backup-codes`, { code })).backup_codes,
+
+  // Users (owner)
+  getUsers: () => request(`${API}/users`),
+  resetUserTotp: (id) => request(`${API}/users/${id}/totp/reset`, { method: 'POST' }),
 
   // Account invites (sign-up links; not group invite codes)
   checkAccountInvite: (code) => send('POST', `${API}/invites/check`, { code }),

@@ -5,13 +5,15 @@ import { useState, useEffect } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../AuthContext.jsx';
 import { checkDishTypeForm } from '../../logic/catalog.js';
-import { catalogChangeRefusal } from '../../logic/access.js';
+import { catalogChangeRefusal, canListUsers } from '../../logic/access.js';
 import { canManageInvites } from '../../logic/invites.js';
 import { allowedIds } from '../ui/access.js';
-import { settingsTabs, INVITES_TAB } from '../ui/settings.js';
+import { settingsTabs, INVITES_TAB, SECURITY_TAB } from '../ui/settings.js';
 import SettingsView, { DishTypeDialog } from '../ui/SettingsView.jsx';
 import InvitesTabView from '../ui/InvitesTabView.jsx';
+import SecurityTabView from '../ui/SecurityTabView.jsx';
 import { useAccountInvites } from '../hooks/useAccountInvites.js';
+import { useSecurity } from '../hooks/useSecurity.js';
 import AddMealTypeModal from './AddMealTypeModal.jsx';
 
 // kind: 'meal' | 'dish'. The server refuses edit and delete for the same entries.
@@ -34,6 +36,7 @@ export default function SettingsModal({ dark, onToggleDark, onClose }) {
 
   const showInvites = canManageInvites(user);
   const invites = useAccountInvites(showInvites && activeTab === INVITES_TAB.id);
+  const security = useSecurity({ enabled: activeTab === SECURITY_TAB.id, showUsers: canListUsers(user) });
 
   const fetchAll = async () => {
     setLoading(true);
@@ -113,6 +116,7 @@ export default function SettingsModal({ dark, onToggleDark, onClose }) {
           onClose={() => setDishTypeDialog(null)}
         />
       )}
+      securityTab={<SecurityTabView {...security} />}
       invitesTab={showInvites && (
         <InvitesTabView
           rows={invites.rows}

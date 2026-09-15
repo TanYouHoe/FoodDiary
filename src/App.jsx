@@ -9,6 +9,8 @@ import { useTheme } from './hooks/useTheme.js';
 import AppShell from './ui/AppShell.jsx';
 import Login from './pages/Login';
 import Invite from './pages/Invite';
+import MfaStep from './pages/MfaStep';
+import Enroll from './pages/Enroll';
 import Dashboard from './pages/Dashboard';
 import Restaurants from './pages/Restaurants';
 import Meals from './pages/Meals';
@@ -34,7 +36,7 @@ const NAV = (
 );
 
 function App() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, mfaPending, needsEnrollment } = useAuth();
   const { dark, toggleDark } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -45,8 +47,14 @@ function App() {
     setSidebarOpen(false);
   }, [location.pathname]);
 
+  // Signing out from inside the settings dialog (Security tab) must not reopen it at the next sign-in.
+  useEffect(() => {
+    if (!user) setShowSettings(false);
+  }, [user]);
+
   if (loading) return <div className="loading">Loading...</div>;
   if (!user) {
+    if (mfaPending) return <MfaStep />;
     return (
       <Routes>
         <Route path={INVITE_ROUTE} element={<Invite />} />
@@ -54,6 +62,7 @@ function App() {
       </Routes>
     );
   }
+  if (needsEnrollment) return <Enroll />;
 
   return (
     <AppShell

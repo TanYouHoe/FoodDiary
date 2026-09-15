@@ -1,11 +1,11 @@
 // UI: the settings popup. A tab sidebar and the tabs: appearance, meal types,
-// dish types, eating patterns and, for the owner, account invites.
-// tabs: settingsTabs (./settings.js). Slots: `mealTypeDialog`, `dishTypeDialog`, `invitesTab`.
+// dish types, eating patterns, security and, for the owner, account invites.
+// tabs: settingsTabs (./settings.js). Slots: `mealTypeDialog`, `dishTypeDialog`, `securityTab`, `invitesTab`.
 
 import React from 'react';
 import { EditIcon, TrashIcon, LockIcon } from './icons.jsx';
 import { toPatternRows, PATTERN_PERIOD_LABELS } from './lists.js';
-import { INVITES_TAB } from './settings.js';
+import { INVITES_TAB, SECURITY_TAB } from './settings.js';
 
 function EntryDetails({ entry }) {
   return (
@@ -158,7 +158,7 @@ export function DishTypeDialog({ isEdit, name, error, submitting, onName, onSubm
 
 export default function SettingsView({
   tabs, activeTab, loading, error, dark, mealTypes, dishTypes, changeableMealTypeIds, changeableDishTypeIds, profile,
-  confirmMealTypeId, confirmDishTypeId, mealTypeDialog, dishTypeDialog, invitesTab,
+  confirmMealTypeId, confirmDishTypeId, mealTypeDialog, dishTypeDialog, securityTab, invitesTab,
   onTab, onClose, onToggleDark,
   onAddMealType, onEditMealType, onAskDeleteMealType, onCancelDeleteMealType, onDeleteMealType,
   onAddDishType, onEditDishType, onAskDeleteDishType, onCancelDeleteDishType, onDeleteDishType,
@@ -246,6 +246,8 @@ export default function SettingsView({
               )}
 
               {activeTab === 'patterns' && <PatternsTab profile={profile} />}
+
+              {activeTab === SECURITY_TAB.id && securityTab}
 
               {activeTab === INVITES_TAB.id && invitesTab}
             </div>
