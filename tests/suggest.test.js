@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   scoreRestaurant, generateExplanation, rollSlotTypes, assembleMealSuggestions, topUpSuggestions,
   excludeRecentlyEaten, mergeByPriority, effectivePriceRange, profileConfidence, tagAsNew, rankRestaurants,
+  mealContext,
 } from '../logic/suggest.js';
 import { openDatabase } from '../server/db.js';
 import { suggestMeal } from '../server/suggestions.js';
@@ -112,8 +113,23 @@ describe('meal suggester rules', () => {
   });
 
   it('excludes restaurants eaten in the same period lately', () => {
-    const visits = new Map([[1, ['2026-03-28T12:30:00']], [2, ['2026-03-28T19:00:00']]]);
-    assert.deepEqual(excludeRecentlyEaten([r(1), r(2), r(3)], visits, 'lunch').map(x => x.id), [2, 3]);
+    const visits = new Map([[1, ['2026-03-28T12:30:00Z']], [2, ['2026-03-28T19:00:00Z']]]);
+    assert.deepEqual(excludeRecentlyEaten([r(1), r(2), r(3)], visits, 'lunch', 'UTC').map(x => x.id), [2, 3]);
+  });
+
+  it('reads the period of a past visit in the given zone', () => {
+    // 04:30 UTC is 12:30 in Kuala Lumpur: lunch there, breakfast in UTC.
+    const visits = new Map([[1, ['2026-03-28T04:30:00Z']]]);
+    assert.deepEqual(excludeRecentlyEaten([r(1), r(2)], visits, 'lunch', 'Asia/Kuala_Lumpur').map(x => x.id), [2]);
+    assert.deepEqual(excludeRecentlyEaten([r(1), r(2)], visits, 'lunch', 'UTC').map(x => x.id), [1, 2]);
+  });
+
+  it('reads the meal context in the given zone', () => {
+    // Saturday 20:30 UTC is Sunday 04:30 in Kuala Lumpur.
+    const now = new Date('2026-03-28T20:30:00Z');
+    assert.deepEqual(mealContext(now, 'Asia/Kuala_Lumpur'), { dayOfWeek: 0, mealPeriod: 'breakfast', today: '2026-03-29' });
+    assert.deepEqual(mealContext(now, 'UTC'), { dayOfWeek: 6, mealPeriod: 'dinner', today: '2026-03-28' });
+    assert.throws(() => mealContext(now), RangeError);
   });
 
   it('merges pools in order and keeps the first of each id', () => {
@@ -128,8 +144,9 @@ describe('suggestMeal', () => {
   let db;
   let userId;
 
-  // Sunday 2026-03-29 at 12:30 local time: lunch, dayOfWeek 0
-  const testNow = new Date('2026-03-29T12:30:00');
+  // Sunday 2026-03-29 at 12:30 in Kuala Lumpur (04:30 UTC): lunch, dayOfWeek 0
+  const testNow = new Date('2026-03-29T04:30:00Z');
+  const timeZone = 'Asia/Kuala_Lumpur';
 
   const addProfile = (adventureRatio, totalMeals) => db.prepare(`
     INSERT INTO user_meal_profiles (user_id, day_of_week, meal_period, adventure_ratio, total_meals, avg_price_range)
@@ -147,17 +164,17 @@ describe('suggestMeal', () => {
     addRestaurant.run('New Korean', 'Korean', 3, userId);     // 5
     addRestaurant.run('New Japanese', 'Japanese', 2, userId); // 6
     const addMeal = db.prepare('INSERT INTO meals (restaurant_id, user_id, rating, visited_at) VALUES (?, ?, ?, ?)');
-    addMeal.run(1, userId, 5, '2026-03-22T12:00:00');
-    addMeal.run(1, userId, 4, '2026-03-15T12:00:00');
-    addMeal.run(1, userId, 5, '2026-03-08T12:00:00');
-    addMeal.run(2, userId, 4, '2026-03-20T12:00:00');
-    addMeal.run(2, userId, 3, '2026-03-13T12:00:00');
-    addMeal.run(3, userId, 4, '2026-03-18T12:00:00');
+    addMeal.run(1, userId, 5, '2026-03-22T04:00:00.000Z');
+    addMeal.run(1, userId, 4, '2026-03-15T04:00:00.000Z');
+    addMeal.run(1, userId, 5, '2026-03-08T04:00:00.000Z');
+    addMeal.run(2, userId, 4, '2026-03-20T04:00:00.000Z');
+    addMeal.run(2, userId, 3, '2026-03-13T04:00:00.000Z');
+    addMeal.run(3, userId, 4, '2026-03-18T04:00:00.000Z');
   });
 
   it('all-familiar rolls pick the most visited restaurants at the profile price', () => {
     addProfile(0.1, 25);
-    const out = suggestMeal(db, { userId, now: testNow, rng: () => 0.99 });
+    const out = suggestMeal(db, { userId, now: testNow, timeZone, rng: () => 0.99 });
     // The third pick is cross-filled from the new pool and labelled new.
     assert.deepEqual(out.map(s => [s.name, s.suggestion_type]), [
       ['Fav Chinese', 'familiar'], ['Fav Malay', 'familiar'], ['New Thai', 'new'],
@@ -167,7 +184,7 @@ describe('suggestMeal', () => {
 
   it('all-new rolls pick never-visited restaurants, then other cuisines', () => {
     addProfile(0.9, 25);
-    const out = suggestMeal(db, { userId, now: testNow, rng: () => 0 });
+    const out = suggestMeal(db, { userId, now: testNow, timeZone, rng: () => 0 });
     // Profile price 2 filters out New Korean; Fav Malay comes from the
     // "not the usual cuisine" source.
     assert.deepEqual(out.map(s => [s.name, s.suggestion_type]), [
@@ -176,14 +193,23 @@ describe('suggestMeal', () => {
   });
 
   it('falls back to the scorer, all new, when there is no profile', () => {
-    const out = suggestMeal(db, { userId, now: testNow, rng: () => 0 });
+    const out = suggestMeal(db, { userId, now: testNow, timeZone, rng: () => 0 });
     assert.ok(out.length > 0 && out.length <= 3);
     assert.ok(out.every(s => s.suggestion_type === 'new'));
   });
 
+  it('finds the profile slot in the zone it is given', () => {
+    addProfile(0.1, 25); // Sunday lunch
+    const familiar = (zone) => suggestMeal(db, { userId, now: testNow, timeZone: zone, rng: () => 0.99 })
+      .filter(s => s.suggestion_type === 'familiar').length;
+    assert.equal(familiar(timeZone), 2);
+    // 04:30 UTC is Sunday breakfast: no profile there, so every pick is new.
+    assert.equal(familiar('UTC'), 0);
+  });
+
   it('applies the cuisine filter to every pool', () => {
     addProfile(0.5, 25);
-    const out = suggestMeal(db, { userId, cuisine: 'Chinese', now: testNow, rng: sequence(0.1, 0.9, 0.4) });
+    const out = suggestMeal(db, { userId, cuisine: 'Chinese', now: testNow, timeZone, rng: sequence(0.1, 0.9, 0.4) });
     assert.ok(out.length > 0);
     assert.ok(out.every(s => s.cuisine_type === 'Chinese'));
   });

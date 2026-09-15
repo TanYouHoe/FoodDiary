@@ -80,6 +80,7 @@ The tests need no running server. `tests/api.test.js` builds the app on an in-me
 | `PORT`                  | server  | `3004`                  | API / SPA listen port.                                                  |
 | `JWT_SECRET`            | server  | `food-diary-dev-secret` | HMAC secret for signing JWTs. **Set a real value in production** — the fallback is insecure. |
 | `GOOGLE_CLIENT_ID`      | server  | _(unset)_               | Google OAuth client ID; the audience that Google ID tokens are verified against. Required for Google Sign-In. |
+| `DEFAULT_TIME_ZONE`     | server  | `Asia/Kuala_Lumpur`     | IANA time zone for users whose browser has not sent one yet. The server refuses to start with an unknown zone. |
 | `VITE_GOOGLE_CLIENT_ID` | client  | _(unset)_               | Same client ID, exposed to the front end (read in `src/pages/Login.jsx`). Set in `.env`. If unset, the Google button is hidden. |
 
 Server-side env vars (`PORT`, `JWT_SECRET`, `GOOGLE_CLIENT_ID`) come from the process environment. The client-side `VITE_GOOGLE_CLIENT_ID` is read from `.env` at build/dev time by Vite. A Google OAuth client and its `client_secret_*.json` are gitignored.
@@ -175,7 +176,7 @@ Two algorithms, selected by the `type` query param on `/api/suggest`. The rules 
 
 **Meal suggester** (`suggestMeal`, `?type=meal`) is profile-driven. For the current day-of-week and meal period it reads your learned profile (`user_meal_profiles`) and blends *familiar* favorites with *new* picks according to your `adventure_ratio` for that slot. With little history it falls back to the restaurant scorer.
 
-Meal periods (from [`logic/meal-period.js`](logic/meal-period.js), by hour of `visited_at` in the server's local time zone): `breakfast` (<11), `lunch` (11–15), `tea` (15–17), `dinner` (17–21), `supper` (≥21).
+Meal periods (from [`logic/meal-period.js`](logic/meal-period.js), by hour of `visited_at` in the user's time zone — the browser sends it as `X-Time-Zone`, the server stores it on the user, and `DEFAULT_TIME_ZONE` covers users it has not heard from): `breakfast` (<11), `lunch` (11–15), `tea` (15–17), `dinner` (17–21), `supper` (≥21).
 
 The profile (`user_meal_profiles`) is **rebuilt automatically** on every meal create / update / delete. `buildProfileRows` ([`logic/profile.js`](logic/profile.js)) computes, per (day-of-week, meal-period), the average price range, adventure ratio, average rating, meal frequency (per week), group ratio, and total meals.
 

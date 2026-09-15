@@ -4,7 +4,8 @@
 import { buildProfileRows } from '../logic/profile.js';
 import { pick, PROFILE_FIELDS } from './rows.js';
 
-export function rebuildProfile(db, userId) {
+// timeZone: the IANA zone the user's meals are read in.
+export function rebuildProfile(db, userId, timeZone) {
   const meals = db.prepare(`
     SELECT m.visited_at, m.rating, m.restaurant_id, m.group_id, r.price_range
     FROM meals m
@@ -19,7 +20,7 @@ export function rebuildProfile(db, userId) {
     price_range: row.price_range,
   }));
 
-  const rows = buildProfileRows(meals);
+  const rows = buildProfileRows(meals, timeZone);
   const remove = db.prepare('DELETE FROM user_meal_profiles WHERE user_id = ?');
   const insert = db.prepare(`
     INSERT INTO user_meal_profiles

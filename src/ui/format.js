@@ -55,11 +55,6 @@ export function toTimeInput(dateStr) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// Default date for a new meal. Uses the UTC day, as the log dialog always has.
-export function utcDateInput(now) {
-  return now.toISOString().split('T')[0];
-}
-
 const DATE_TIME = { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
 
 export function formatDateTime(dateStr) {

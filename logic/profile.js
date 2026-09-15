@@ -1,17 +1,18 @@
 // Logic: builds a user's eating profile from their meal history.
 // One row per (day of week, meal period) the user has eaten in.
 
-import { getMealPeriod, getDayOfWeek } from './meal-period.js';
+import { getMealPeriod, getDayOfWeek, isValidTimeZone } from './meal-period.js';
 
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
 const average = (values) => values.reduce((a, b) => a + b, 0) / values.length;
 
 // meals: [{ visited_at, rating, restaurant_id, group_id, price_range }],
-// sorted by visited_at ascending.
+// sorted by visited_at ascending. timeZone: the IANA zone the user eats in.
 // Returns [{ day_of_week, meal_period, avg_price_range, adventure_ratio,
 //            avg_rating_threshold, meal_frequency, group_ratio, total_meals }]
-export function buildProfileRows(meals) {
+export function buildProfileRows(meals, timeZone) {
+  if (!isValidTimeZone(timeZone)) throw new RangeError(`Invalid time zone: ${timeZone}`);
   if (meals.length === 0) return [];
 
   // Weeks spanned by the whole history, minimum 1.
@@ -21,8 +22,8 @@ export function buildProfileRows(meals) {
 
   const slots = new Map();
   for (const meal of meals) {
-    const dow = getDayOfWeek(meal.visited_at);
-    const period = getMealPeriod(meal.visited_at);
+    const dow = getDayOfWeek(meal.visited_at, timeZone);
+    const period = getMealPeriod(meal.visited_at, timeZone);
     const key = `${dow}|${period}`;
     if (!slots.has(key)) {
       slots.set(key, {

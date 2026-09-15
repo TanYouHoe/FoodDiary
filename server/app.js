@@ -9,6 +9,8 @@ import { makeTokens, makeAuthenticate, verifyGoogleCredential } from './auth.js'
 import { makeUpload, isUploadError } from './uploads.js';
 import { makeGroupAccess } from './guards.js';
 import { rebuildProfile } from './profile-store.js';
+import { resolveTimeZone } from '../logic/meal-period.js';
+import { DEFAULT_TIME_ZONE } from '../logic/config.js';
 import { authRoutes } from './routes/auth.js';
 import { restaurantRoutes } from './routes/restaurants.js';
 import { mealTypeRoutes, dishTypeRoutes } from './routes/catalog.js';
@@ -27,16 +29,22 @@ export function createApp({
   now = () => new Date(),
   rng = Math.random,
   log = () => {},
+  defaultTimeZone = DEFAULT_TIME_ZONE,
 }) {
   const tokens = makeTokens(jwtSecret);
-  const authenticate = makeAuthenticate({ db, tokens });
   const upload = makeUpload(uploadsDir);
   const groupAllowed = makeGroupAccess(db);
 
   // The profile is derived data. A failed rebuild must not fail the meal change.
+  // It is read in the user's stored zone, else the default zone.
+  const storedTimeZone = db.prepare('SELECT timezone FROM users WHERE id = ?');
   const refreshProfile = (userId) => {
-    try { rebuildProfile(db, userId); } catch (err) { log(`[profile] rebuild failed for user ${userId}: ${err.message}`); }
+    try {
+      const timeZone = resolveTimeZone({ stored: storedTimeZone.get(userId)?.timezone, fallback: defaultTimeZone });
+      rebuildProfile(db, userId, timeZone);
+    } catch (err) { log(`[profile] rebuild failed for user ${userId}: ${err.message}`); }
   };
+  const authenticate = makeAuthenticate({ db, tokens, defaultTimeZone, onTimeZoneChange: refreshProfile });
 
   const app = express();
   app.use(cors());

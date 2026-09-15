@@ -5,13 +5,19 @@ import { getToken } from './token-store.js';
 
 const API = '/api';
 
-async function request(url, options = {}) {
+// Every request names the browser's IANA time zone, so the server reads meal
+// periods and weekdays where the user is.
+function commonHeaders() {
   const token = getToken();
+  return {
+    'X-Time-Zone': Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+async function request(url, options = {}) {
   const res = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { 'Content-Type': 'application/json', ...commonHeaders() },
     ...options,
   });
   if (res.status === 204) return null;
@@ -34,7 +40,7 @@ function query(params = {}) {
 function uploadForm(url, form) {
   return fetch(url, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${getToken()}` },
+    headers: commonHeaders(),
     body: form,
   }).then(r => r.json());
 }

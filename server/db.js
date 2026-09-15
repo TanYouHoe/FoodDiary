@@ -129,6 +129,7 @@ const ADDED_COLUMNS = [
   ['users', 'role', `TEXT NOT NULL DEFAULT '${USER_ROLES.member}' CHECK(role IN (${ROLE_LIST}))`],
   ['meal_types', 'created_by', 'INTEGER REFERENCES users(id)'],
   ['dish_types', 'created_by', 'INTEGER REFERENCES users(id)'],
+  ['users', 'timezone', 'TEXT'],
 ];
 
 function migrate(db) {

@@ -6,9 +6,9 @@
 //
 // No database here. server/suggestions.js reads the rows and calls these.
 // The clock arrives as `today` (YYYY-MM-DD) and `now` (ms or Date); the random
-// source arrives as `rng`.
+// source arrives as `rng`; the user's IANA time zone arrives as `timeZone`.
 
-import { getMealPeriod } from './meal-period.js';
+import { getMealPeriod, getDayOfWeek, getCalendarDate } from './meal-period.js';
 
 export const WEIGHTS = {
   recency: 0.35,
@@ -113,10 +113,13 @@ export function rankRestaurants(candidates, { recentCuisines, maxVisitCount, tod
 // Meal suggester
 // ---------------------------------------------------------------------------
 
-// now: Date
-export function mealContext(now) {
-  const iso = now.toISOString();
-  return { dayOfWeek: now.getDay(), mealPeriod: getMealPeriod(iso), today: iso.slice(0, 10) };
+// now: Date. timeZone: the IANA zone the day, period and date are read in.
+export function mealContext(now, timeZone) {
+  return {
+    dayOfWeek: getDayOfWeek(now, timeZone),
+    mealPeriod: getMealPeriod(now, timeZone),
+    today: getCalendarDate(now, timeZone),
+  };
 }
 
 // How much to trust the profile: 0 with no profile, 1 at 20+ meals.
@@ -155,10 +158,10 @@ export function staleCutoff(today) {
 }
 
 // Drops restaurants eaten at in the same meal period within the cooldown.
-// recentVisits: Map restaurantId -> [visited_at]
-export function excludeRecentlyEaten(candidates, recentVisits, mealPeriod) {
+// recentVisits: Map restaurantId -> [visited_at]. timeZone: the zone periods are read in.
+export function excludeRecentlyEaten(candidates, recentVisits, mealPeriod, timeZone) {
   return candidates.filter(r =>
-    !(recentVisits.get(r.id) || []).some(visitedAt => getMealPeriod(visitedAt) === mealPeriod));
+    !(recentVisits.get(r.id) || []).some(visitedAt => getMealPeriod(visitedAt, timeZone) === mealPeriod));
 }
 
 // The "different cuisine" source only applies when no cuisine is filtered.

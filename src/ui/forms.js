@@ -3,7 +3,7 @@
 
 import { toEditableDishes } from '../../logic/dishes.js';
 import { DEFAULT_PRICE_RANGE } from '../../logic/restaurants.js';
-import { toDateInput, toTimeInput, utcDateInput } from './format.js';
+import { toDateInput, toTimeInput } from './format.js';
 
 export function newMealForm(now) {
   return {
@@ -12,7 +12,7 @@ export function newMealForm(now) {
     dishes: [],
     calories: '',
     rating: 3,
-    date: utcDateInput(now),
+    date: toDateInput(now),
     time: toTimeInput(now),
     notes: '',
     groupId: '',

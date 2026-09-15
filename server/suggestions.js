@@ -1,7 +1,7 @@
 // Connector: reads what the recommendation engine needs from the database and
 // hands it to logic/suggest.js. Every decision is made there.
 //
-// now: Date. rng: () => number in [0, 1).
+// now: Date. rng: () => number in [0, 1). timeZone: the request's IANA zone.
 
 import {
   rankRestaurants, mealContext, profileConfidence, profileAdventureRatio, rollSlotTypes,
@@ -86,8 +86,8 @@ export function getSuggestions(db, { userId, groupId, cuisine, priceRange, now }
 }
 
 // Profile-driven meal suggester.
-export function suggestMeal(db, { userId, groupId, cuisine, priceRange, now, rng }) {
-  const { dayOfWeek, mealPeriod, today } = mealContext(now);
+export function suggestMeal(db, { userId, groupId, cuisine, priceRange, now, rng, timeZone }) {
+  const { dayOfWeek, mealPeriod, today } = mealContext(now, timeZone);
   const profile = findProfile(db, userId, dayOfWeek, mealPeriod);
   const scorerPicks = () => getSuggestions(db, { userId, groupId, cuisine, priceRange, now });
 
@@ -95,7 +95,7 @@ export function suggestMeal(db, { userId, groupId, cuisine, priceRange, now, rng
 
   const slotTypes = rollSlotTypes(profileAdventureRatio(profile), rng);
   const price = effectivePriceRange(priceRange, profile);
-  const familiar = familiarPool(db, { userId, cuisine, price, mealPeriod, today });
+  const familiar = familiarPool(db, { userId, cuisine, price, mealPeriod, today, timeZone });
   const fresh = newPool(db, { userId, cuisine, price, today });
 
   const results = assembleMealSuggestions(slotTypes, familiar, fresh);
@@ -103,7 +103,7 @@ export function suggestMeal(db, { userId, groupId, cuisine, priceRange, now, rng
 }
 
 // The user's most visited restaurants, minus any eaten this meal period lately.
-function familiarPool(db, { userId, cuisine, price, mealPeriod, today }) {
+function familiarPool(db, { userId, cuisine, price, mealPeriod, today, timeZone }) {
   const f = restaurantFilter(cuisine, price);
   const candidates = db.prepare(`
     SELECT r.*, COUNT(m.id) as visit_count, AVG(m.rating) as avg_rating
@@ -117,7 +117,7 @@ function familiarPool(db, { userId, cuisine, price, mealPeriod, today }) {
   const recent = db.prepare('SELECT m.visited_at FROM meals m WHERE m.user_id = ? AND m.restaurant_id = ? AND m.visited_at >= ?');
   const recentVisits = new Map(candidates.map(r => [r.id, recent.all(userId, r.id, cutoff).map(row => row.visited_at)]));
 
-  return excludeRecentlyEaten(candidates, recentVisits, mealPeriod);
+  return excludeRecentlyEaten(candidates, recentVisits, mealPeriod, timeZone);
 }
 
 // Places to try, in priority order: planned, never visited, not visited

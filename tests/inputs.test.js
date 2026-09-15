@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { checkMealTypeInput, checkDishTypeInput, checkMealTypeForm, checkDishTypeForm } from '../logic/catalog.js';
 import { normalizeMealDishes } from '../logic/dishes.js';
 import { checkRestaurantInput } from '../logic/restaurants.js';
-import { checkServerConfig, DEV_JWT_SECRET, MIN_JWT_SECRET_LENGTH } from '../logic/config.js';
+import { checkServerConfig, DEV_JWT_SECRET, MIN_JWT_SECRET_LENGTH, DEFAULT_TIME_ZONE } from '../logic/config.js';
 import { parseGroupId } from '../logic/accounts.js';
 import { checkNewMeal, toMealPatch, mergeMealPhotos, MAX_MEAL_PHOTOS } from '../logic/meals.js';
 import { checkPlannedInput } from '../logic/planned.js';
@@ -148,4 +148,15 @@ describe('checkServerConfig', () => {
     assert.equal(MIN_JWT_SECRET_LENGTH, 32);
   });
   it('the development default is the documented one', () => assert.equal(DEV_JWT_SECRET, 'food-diary-dev-secret'));
+  it('refuses a default time zone Intl does not know, in every environment', () => {
+    for (const nodeEnv of [undefined, 'development', 'production']) {
+      const secret = 'x'.repeat(MIN_JWT_SECRET_LENGTH);
+      assert.deepEqual(checkServerConfig({ nodeEnv, jwtSecret: secret, defaultTimeZone: undefined }), [], nodeEnv);
+      assert.deepEqual(checkServerConfig({ nodeEnv, jwtSecret: secret, defaultTimeZone: 'UTC' }), [], nodeEnv);
+      assert.deepEqual(checkServerConfig({ nodeEnv, jwtSecret: secret, defaultTimeZone: 'Mars/Olympus' }),
+        ['DEFAULT_TIME_ZONE must be an IANA time zone, such as Asia/Kuala_Lumpur.'], nodeEnv);
+      assert.equal(checkServerConfig({ nodeEnv, jwtSecret: secret, defaultTimeZone: '' }).length, 1, nodeEnv);
+    }
+  });
+  it('the default time zone is Kuala Lumpur', () => assert.equal(DEFAULT_TIME_ZONE, 'Asia/Kuala_Lumpur'));
 });

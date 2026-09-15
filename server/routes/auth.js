@@ -11,7 +11,7 @@ const BCRYPT_ROUNDS = 10;
 export function authRoutes({ db, tokens, authenticate, verifyGoogle, googleClientId }) {
   const r = Router();
   const byEmail = db.prepare('SELECT * FROM users WHERE email = ?');
-  const byId = db.prepare('SELECT id, name, email, avatar_url, role, created_at FROM users WHERE id = ?');
+  const byId = db.prepare('SELECT id, name, email, avatar_url, role, timezone, created_at FROM users WHERE id = ?');
   const insertUser = db.prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)');
   const insertGoogleUser = db.prepare('INSERT INTO users (name, email, password_hash, avatar_url) VALUES (?, ?, ?, ?)');
   const setAvatar = db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?');
