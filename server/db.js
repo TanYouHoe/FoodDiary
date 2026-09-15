@@ -4,7 +4,7 @@
 
 import Database from 'better-sqlite3';
 import { SEED_MEAL_TYPES, SEED_DISH_TYPE_NAMES } from '../logic/catalog.js';
-import { USER_ROLES, ownerToPromote } from '../logic/access.js';
+import { USER_ROLES, ownerPromotion } from '../logic/access.js';
 import { isValidTimeZone, localDateTimeToInstant } from '../logic/meal-period.js';
 
 const ROLE_LIST = Object.values(USER_ROLES).map(role => `'${role}'`).join(',');
@@ -112,8 +112,10 @@ const SCHEMA = `
     key TEXT PRIMARY KEY,
     value TEXT
   );
+`;
 
-  CREATE TABLE IF NOT EXISTS invites (
+const INVITES_TABLE = `
+  CREATE TABLE invites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code_hash TEXT UNIQUE NOT NULL,
     role TEXT NOT NULL CHECK(role IN (${ROLE_LIST})),
@@ -199,19 +201,26 @@ function seed(db) {
 
 const LEGACY_OWNER_PROMOTION = 'legacy_owner_promotion';
 
-// Records, once, that the invites table arrived on a database that already
-// held users. Call with what was true before the schema ran.
-function recordLegacyOwnerPromotion(db, { hadInvitesTable, hadUsers }) {
-  if (hadInvitesTable || !hadUsers) return;
-  db.prepare('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)').run(LEGACY_OWNER_PROMOTION, '1');
+// Creates the invites table once. When the database already holds users, the
+// same transaction records that, so the table never exists without the fact.
+function createInvitesTable(db) {
+  if (hasTable(db, 'invites')) return;
+  db.transaction(() => {
+    const hadUsers = db.prepare('SELECT COUNT(*) AS c FROM users').get().c > 0;
+    db.exec(INVITES_TABLE);
+    if (hadUsers) db.prepare('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)').run(LEGACY_OWNER_PROMOTION, '1');
+  })();
 }
 
-// Makes a user the owner when nobody is, in a database from before invites
-// (logic/access.js decides who). Idempotent.
+// In a database from before invites, makes a user the owner when nobody is,
+// then spends the legacy flag (logic/access.js decides both). Idempotent.
 export function promoteOwner(db) {
-  const hadUsersBeforeInvites = Boolean(db.prepare('SELECT 1 FROM meta WHERE key = ?').get(LEGACY_OWNER_PROMOTION));
-  const id = ownerToPromote(db.prepare('SELECT id, role FROM users').all(), { hadUsersBeforeInvites });
-  if (id != null) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(USER_ROLES.owner, id);
+  db.transaction(() => {
+    const hadUsersBeforeInvites = Boolean(db.prepare('SELECT 1 FROM meta WHERE key = ?').get(LEGACY_OWNER_PROMOTION));
+    const { promoteId, endLegacy } = ownerPromotion(db.prepare('SELECT id, role FROM users').all(), { hadUsersBeforeInvites });
+    if (promoteId !== null) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(USER_ROLES.owner, promoteId);
+    if (endLegacy) db.prepare('DELETE FROM meta WHERE key = ?').run(LEGACY_OWNER_PROMOTION);
+  })();
 }
 
 // path: a file path or ':memory:'. defaultTimeZone: the IANA zone old zone-less
@@ -221,12 +230,8 @@ export function openDatabase(path, { defaultTimeZone } = {}) {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
-  const before = {
-    hadInvitesTable: hasTable(db, 'invites'),
-    hadUsers: hasTable(db, 'users') && db.prepare('SELECT COUNT(*) AS c FROM users').get().c > 0,
-  };
   db.exec(SCHEMA);
-  recordLegacyOwnerPromotion(db, before);
+  createInvitesTable(db);
   migrate(db);
   convertZonelessVisitTimes(db, defaultTimeZone);
   seed(db);

@@ -10,6 +10,7 @@ import { createInvite, makeInvites } from '../server/invites.js';
 
 const NOW = new Date('2026-09-16T10:00:00.000Z');
 const columns = (db, table) => db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all().map(c => c.name);
+const legacyFlag = (db) => db.prepare('SELECT value FROM meta WHERE key = ?').get('legacy_owner_promotion');
 const addUser = (db, email, role) => db.prepare("INSERT INTO users (name, email, password_hash, role) VALUES ('U', ?, 'h', ?)")
   .run(email, role).lastInsertRowid;
 
@@ -39,7 +40,7 @@ describe('openDatabase', () => {
     db.close();
   });
 
-  it('in a database from before invites, promotes the lowest id only when no owner exists, on every open', () => {
+  it('in a database from before invites, promotes the lowest id once, then never again', () => {
     const old = new Database(file);
     old.exec(`
       CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
@@ -49,18 +50,49 @@ describe('openDatabase', () => {
     old.close();
 
     let db = openDatabase(file, { defaultTimeZone: 'UTC' });
-    assert.deepEqual(db.prepare('SELECT value FROM meta WHERE key = ?').get('legacy_owner_promotion'), { value: '1' });
+    assert.deepEqual(db.prepare('SELECT id, role FROM users ORDER BY id').all(), [{ id: 1, role: 'owner' }, { id: 2, role: 'member' }]);
+    assert.equal(legacyFlag(db), undefined, 'the first promotion spends the flag');
+    db.prepare("UPDATE users SET role = 'member'").run();
+    db.prepare("INSERT INTO users (name, email, password_hash) VALUES ('Stranger', 'stranger@test.com', 'h')").run();
+    db.close();
+
+    db = openDatabase(file, { defaultTimeZone: 'UTC' });
+    assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'owner'").get().c, 0, 'a later ownerless state promotes nobody');
+    db.close();
+  });
+
+  it('a database from before invites that already has an owner keeps it and spends the flag', () => {
+    const old = new Database(file);
+    old.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL, avatar_url TEXT, created_at TEXT DEFAULT (datetime('now')),
+        role TEXT NOT NULL DEFAULT 'member');
+      INSERT INTO users (name, email, password_hash, role) VALUES ('A', 'a@test.com', 'h', 'member'), ('B', 'b@test.com', 'h', 'owner');
+    `);
+    old.close();
+
+    let db = openDatabase(file, { defaultTimeZone: 'UTC' });
+    assert.deepEqual(db.prepare('SELECT id, role FROM users ORDER BY id').all(), [{ id: 1, role: 'member' }, { id: 2, role: 'owner' }]);
+    assert.equal(legacyFlag(db), undefined);
     db.prepare("UPDATE users SET role = 'member'").run();
     db.close();
 
     db = openDatabase(file, { defaultTimeZone: 'UTC' });
-    assert.deepEqual(db.prepare('SELECT id, role FROM users ORDER BY id').all(), [{ id: 1, role: 'owner' }, { id: 2, role: 'member' }]);
-    db.prepare("UPDATE users SET role = 'member' WHERE id = 1").run();
-    db.prepare("UPDATE users SET role = 'owner' WHERE id = 2").run();
+    assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'owner'").get().c, 0);
+    db.close();
+  });
+
+  it('an interrupted legacy open still promotes on the next open', () => {
+    // The flag and the invites table arrive together; a crash before the
+    // promotion leaves both, and the next open finishes the job.
+    let db = openDatabase(file, { defaultTimeZone: 'UTC' });
+    db.prepare("INSERT INTO users (name, email, password_hash) VALUES ('U', 'u@test.com', 'h')").run();
+    db.prepare("INSERT INTO meta (key, value) VALUES ('legacy_owner_promotion', '1')").run();
     db.close();
 
     db = openDatabase(file, { defaultTimeZone: 'UTC' });
-    assert.deepEqual(db.prepare('SELECT id, role FROM users ORDER BY id').all(), [{ id: 1, role: 'member' }, { id: 2, role: 'owner' }]);
+    assert.deepEqual(db.prepare('SELECT role FROM users').all(), [{ role: 'owner' }]);
+    assert.equal(legacyFlag(db), undefined);
     db.close();
   });
 

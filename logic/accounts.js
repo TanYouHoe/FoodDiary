@@ -33,6 +33,14 @@ export function shouldAdoptPicture(picture, user) {
   return Boolean(picture && !user.avatar_url);
 }
 
+export const EMAIL_TAKEN = 'Email already registered';
+export const GOOGLE_EMAIL_NOT_VERIFIED = 'Google account email is not verified';
+
+// A Google profile vouches for its email only when email_verified is exactly true.
+export function isVerifiedGoogleProfile(profile) {
+  return profile?.email_verified === true;
+}
+
 export function checkGroupName(body) {
   const { name } = body;
   if (!name?.trim()) return { ok: false, error: 'Group name required' };

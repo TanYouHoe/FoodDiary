@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { checkMealTypeInput, checkDishTypeInput, checkMealTypeForm, checkDishTypeForm } from '../logic/catalog.js';
 import { normalizeMealDishes } from '../logic/dishes.js';
 import { checkRestaurantInput } from '../logic/restaurants.js';
-import { checkServerConfig, DEV_JWT_SECRET, MIN_JWT_SECRET_LENGTH, DEFAULT_TIME_ZONE } from '../logic/config.js';
+import { checkServerConfig, DEV_JWT_SECRET, MIN_JWT_SECRET_LENGTH, DEFAULT_TIME_ZONE, DEFAULT_PORT, DEV_ORIGIN } from '../logic/config.js';
+import { isVerifiedGoogleProfile } from '../logic/accounts.js';
 import { parseGroupId } from '../logic/accounts.js';
 import { checkNewMeal, toMealPatch, mergeMealPhotos, MAX_MEAL_PHOTOS } from '../logic/meals.js';
 import { checkPlannedInput } from '../logic/planned.js';
@@ -171,28 +172,66 @@ describe('checkRestaurantInput', () => {
   });
 });
 
+describe('isVerifiedGoogleProfile', () => {
+  it('accepts only email_verified === true', () => {
+    assert.equal(isVerifiedGoogleProfile({ email: 'a@x.test', email_verified: true }), true);
+    for (const email_verified of [false, undefined, 'true', 1]) {
+      assert.equal(isVerifiedGoogleProfile({ email: 'a@x.test', email_verified }), false, String(email_verified));
+    }
+    assert.equal(isVerifiedGoogleProfile(null), false);
+  });
+});
+
+const PROD_ORIGIN = 'https://food.example.com';
+
 describe('checkServerConfig', () => {
   it('accepts anything outside production', () => {
     assert.deepEqual(checkServerConfig({ nodeEnv: undefined, jwtSecret: undefined }), []);
     assert.deepEqual(checkServerConfig({ nodeEnv: 'development', jwtSecret: DEV_JWT_SECRET }), []);
   });
   it('in production, needs a long secret that is not the development default', () => {
-    assert.equal(checkServerConfig({ nodeEnv: 'production', jwtSecret: undefined }).length, 1);
-    assert.equal(checkServerConfig({ nodeEnv: 'production', jwtSecret: '' }).length, 1);
-    assert.equal(checkServerConfig({ nodeEnv: 'production', jwtSecret: DEV_JWT_SECRET }).length, 1);
-    assert.equal(checkServerConfig({ nodeEnv: 'production', jwtSecret: 'x'.repeat(MIN_JWT_SECRET_LENGTH - 1) }).length, 1);
-    assert.deepEqual(checkServerConfig({ nodeEnv: 'production', jwtSecret: 'x'.repeat(MIN_JWT_SECRET_LENGTH) }), []);
+    const prod = { nodeEnv: 'production', publicOrigin: PROD_ORIGIN };
+    assert.equal(checkServerConfig({ ...prod, jwtSecret: undefined }).length, 1);
+    assert.equal(checkServerConfig({ ...prod, jwtSecret: '' }).length, 1);
+    assert.equal(checkServerConfig({ ...prod, jwtSecret: DEV_JWT_SECRET }).length, 1);
+    assert.equal(checkServerConfig({ ...prod, jwtSecret: 'x'.repeat(MIN_JWT_SECRET_LENGTH - 1) }).length, 1);
+    assert.deepEqual(checkServerConfig({ nodeEnv: 'production', jwtSecret: 'x'.repeat(MIN_JWT_SECRET_LENGTH), publicOrigin: PROD_ORIGIN }), []);
     assert.equal(MIN_JWT_SECRET_LENGTH, 32);
+  });
+  it('in production, needs an https PUBLIC_ORIGIN', () => {
+    const secret = 'x'.repeat(MIN_JWT_SECRET_LENGTH);
+    const problems = (publicOrigin) => checkServerConfig({ nodeEnv: 'production', jwtSecret: secret, publicOrigin });
+    assert.deepEqual(problems(undefined), ['PUBLIC_ORIGIN must be set in production.']);
+    assert.deepEqual(problems(''), ['PUBLIC_ORIGIN must be set in production.']);
+    const HTTPS = ['PUBLIC_ORIGIN must be an https origin in production, such as https://food.example.com.'];
+    assert.deepEqual(problems('http://food.example.com'), HTTPS);
+    assert.deepEqual(problems('food.example.com'), HTTPS);
+    assert.deepEqual(problems('https://food.example.com/path'), HTTPS);
+    assert.deepEqual(problems('https://food.example.com'), []);
+    assert.deepEqual(problems('https://food.example.com:8443'), []);
+  });
+  it('outside production, PUBLIC_ORIGIN may be unset, http or https, but must be an origin', () => {
+    for (const nodeEnv of [undefined, 'development']) {
+      assert.deepEqual(checkServerConfig({ nodeEnv, publicOrigin: undefined }), [], nodeEnv);
+      assert.deepEqual(checkServerConfig({ nodeEnv, publicOrigin: 'http://192.168.1.36:3004' }), [], nodeEnv);
+      assert.deepEqual(checkServerConfig({ nodeEnv, publicOrigin: 'https://food.example.com' }), [], nodeEnv);
+      assert.deepEqual(checkServerConfig({ nodeEnv, publicOrigin: 'ftp://x' }),
+        ['PUBLIC_ORIGIN must be an http or https origin, such as http://localhost:3004.'], nodeEnv);
+    }
+  });
+  it('the default port and development origin agree', () => {
+    assert.equal(DEFAULT_PORT, 3004);
+    assert.equal(DEV_ORIGIN, 'http://localhost:3004');
   });
   it('the development default is the documented one', () => assert.equal(DEV_JWT_SECRET, 'food-diary-dev-secret'));
   it('refuses a default time zone Intl does not know, in every environment', () => {
     for (const nodeEnv of [undefined, 'development', 'production']) {
-      const secret = 'x'.repeat(MIN_JWT_SECRET_LENGTH);
-      assert.deepEqual(checkServerConfig({ nodeEnv, jwtSecret: secret, defaultTimeZone: undefined }), [], nodeEnv);
-      assert.deepEqual(checkServerConfig({ nodeEnv, jwtSecret: secret, defaultTimeZone: 'UTC' }), [], nodeEnv);
-      assert.deepEqual(checkServerConfig({ nodeEnv, jwtSecret: secret, defaultTimeZone: 'Mars/Olympus' }),
+      const base = { nodeEnv, jwtSecret: 'x'.repeat(MIN_JWT_SECRET_LENGTH), publicOrigin: PROD_ORIGIN };
+      assert.deepEqual(checkServerConfig({ ...base, defaultTimeZone: undefined }), [], nodeEnv);
+      assert.deepEqual(checkServerConfig({ ...base, defaultTimeZone: 'UTC' }), [], nodeEnv);
+      assert.deepEqual(checkServerConfig({ ...base, defaultTimeZone: 'Mars/Olympus' }),
         ['DEFAULT_TIME_ZONE must be an IANA time zone, such as Asia/Kuala_Lumpur.'], nodeEnv);
-      assert.equal(checkServerConfig({ nodeEnv, jwtSecret: secret, defaultTimeZone: '' }).length, 1, nodeEnv);
+      assert.equal(checkServerConfig({ ...base, defaultTimeZone: '' }).length, 1, nodeEnv);
     }
   });
   it('the default time zone is Kuala Lumpur', () => assert.equal(DEFAULT_TIME_ZONE, 'Asia/Kuala_Lumpur'));

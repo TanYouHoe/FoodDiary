@@ -4,13 +4,17 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import crypto from 'node:crypto';
-import { checkRegistration, checkLogin, googleAccountName, shouldAdoptPicture } from '../../logic/accounts.js';
+import {
+  checkRegistration, checkLogin, googleAccountName, shouldAdoptPicture, isVerifiedGoogleProfile,
+  EMAIL_TAKEN, GOOGLE_EMAIL_NOT_VERIFIED,
+} from '../../logic/accounts.js';
 import { INVITE_REQUIRED } from '../../logic/invites.js';
 import { pick, USER_FIELDS } from '../rows.js';
 
 const BCRYPT_ROUNDS = 10;
 
 const inviteRequired = (res) => res.status(403).json({ error: INVITE_REQUIRED });
+const emailTaken = (res) => res.status(409).json({ error: EMAIL_TAKEN });
 const isUniqueViolation = (err) => err?.code === 'SQLITE_CONSTRAINT_UNIQUE';
 
 // now: () => Date.
@@ -27,25 +31,33 @@ export function authRoutes({ db, tokens, authenticate, verifyGoogle, googleClien
     return { token: tokens.sign(user.id), user };
   };
 
+  // Uses the invite and inserts the user in one transaction (server/invites.js).
+  // insert: (role) => new user id. Answers 403 or 409, or returns the new user id.
+  const redeem = (res, code, insert) => {
+    let userId;
+    try {
+      userId = invites.redeem(code, now(), insert);
+    } catch (err) {
+      // Another request made the same email meanwhile; the invite stays unused.
+      if (isUniqueViolation(err)) { emailTaken(res); return null; }
+      throw err;
+    }
+    if (userId === null) inviteRequired(res);
+    return userId;
+  };
+
   r.post('/register', async (req, res) => {
     const input = checkRegistration(req.body);
     if (!input.ok) return res.status(400).json({ error: input.error });
     const { invite_code: code } = req.body;
     if (!invites.isUsable(code, now())) return inviteRequired(res);
     const { name, email, password } = input.value;
-    if (byEmail.get(email)) return res.status(409).json({ error: 'Email already registered' });
+    if (byEmail.get(email)) return emailTaken(res);
 
     const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     // The invite is checked again inside the transaction: another request may have used it meanwhile.
-    let userId;
-    try {
-      userId = invites.redeem(code, now(), (role) => insertUser.run(name, email, hash, role).lastInsertRowid);
-    } catch (err) {
-      if (isUniqueViolation(err)) return res.status(409).json({ error: 'Email already registered' });
-      throw err;
-    }
-    if (userId === null) return inviteRequired(res);
-    res.status(201).json(signedIn(userId));
+    const userId = redeem(res, code, (role) => insertUser.run(name, email, hash, role).lastInsertRowid);
+    if (userId !== null) res.status(201).json(signedIn(userId));
   });
 
   r.post('/login', async (req, res) => {
@@ -71,7 +83,8 @@ export function authRoutes({ db, tokens, authenticate, verifyGoogle, googleClien
     } catch {
       return res.status(401).json({ error: 'Invalid Google token' });
     }
-    const { email, name, picture } = profile || {};
+    if (!isVerifiedGoogleProfile(profile)) return res.status(401).json({ error: GOOGLE_EMAIL_NOT_VERIFIED });
+    const { email, name, picture } = profile;
     if (!email) return res.status(400).json({ error: 'No email in Google account' });
 
     const existing = byEmail.get(email);
@@ -83,17 +96,9 @@ export function authRoutes({ db, tokens, authenticate, verifyGoogle, googleClien
     if (!invites.isUsable(code, now())) return inviteRequired(res);
     // Google accounts get an unguessable password so the password login stays closed.
     const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
-    let userId;
-    try {
-      userId = invites.redeem(code, now(), (role) =>
-        insertGoogleUser.run(googleAccountName(name, email), email, hash, picture || null, role).lastInsertRowid);
-    } catch (err) {
-      // The same Google account signed up twice at once; the other request made it.
-      if (isUniqueViolation(err)) return res.status(409).json({ error: 'Email already registered' });
-      throw err;
-    }
-    if (userId === null) return inviteRequired(res);
-    res.json(signedIn(userId));
+    const userId = redeem(res, code, (role) =>
+      insertGoogleUser.run(googleAccountName(name, email), email, hash, picture || null, role).lastInsertRowid);
+    if (userId !== null) res.status(201).json(signedIn(userId));
   });
 
   return r;

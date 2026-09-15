@@ -66,3 +66,12 @@ export function ownerToPromote(users, { hadUsersBeforeInvites = false } = {}) {
   if (users.length === 0 || users.some(isOwner)) return null;
   return Math.min(...users.map(u => u.id));
 }
+
+// The whole at-open decision. promoteId: as ownerToPromote. endLegacy: the
+// legacy rule is spent once the database has an owner (promoted now or
+// already there), so a later ownerless state never promotes an invited stranger.
+export function ownerPromotion(users, { hadUsersBeforeInvites = false } = {}) {
+  const promoteId = ownerToPromote(users, { hadUsersBeforeInvites });
+  const endLegacy = hadUsersBeforeInvites && (promoteId !== null || users.some(isOwner));
+  return { promoteId, endLegacy };
+}

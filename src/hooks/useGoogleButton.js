@@ -15,13 +15,19 @@ export function useGoogleButton(onCredential, enabled = true) {
 
   useEffect(() => {
     if (!GOOGLE_CLIENT_ID || !enabled) return;
-    return loadGoogleIdentity((identity) => {
+    let live = true;
+    const stop = loadGoogleIdentity((identity) => {
+      if (!live) return;
       identity.initialize({
         client_id: GOOGLE_CLIENT_ID,
-        callback: (response) => latest.current(response.credential),
+        callback: (response) => { if (live) latest.current(response.credential); },
       });
       if (ref.current) identity.renderButton(ref.current, GOOGLE_BUTTON);
     });
+    return () => {
+      live = false;
+      stop();
+    };
   }, [enabled]);
 
   return { ref, show: Boolean(GOOGLE_CLIENT_ID) };

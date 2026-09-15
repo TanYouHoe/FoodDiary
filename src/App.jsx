@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
+import { INVITE_ROUTE } from '../logic/invites.js';
 import { useTheme } from './hooks/useTheme.js';
 import AppShell from './ui/AppShell.jsx';
 import Login from './pages/Login';
@@ -48,7 +49,7 @@ function App() {
   if (!user) {
     return (
       <Routes>
-        <Route path="/invite/:code" element={<Invite />} />
+        <Route path={INVITE_ROUTE} element={<Invite />} />
         <Route path="*" element={<Login />} />
       </Routes>
     );
@@ -70,7 +71,7 @@ function App() {
     >
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/invite/:code" element={<Navigate to="/dashboard" replace />} />
+        <Route path={INVITE_ROUTE} element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/restaurants" element={<Restaurants />} />
         <Route path="/meals" element={<Meals />} />

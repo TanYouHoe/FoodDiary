@@ -6,13 +6,13 @@
 import crypto from 'node:crypto';
 import { USER_ROLES } from '../logic/access.js';
 import {
-  ACCOUNT_INVITE_CODE_BYTES, inviteExpiresAt, inviteStatus, inviteCreationRefusal, canUseInvite,
+  ACCOUNT_INVITE_CODE_BYTES, invitePath, inviteExpiresAt, inviteStatus, inviteCreationRefusal, canUseInvite,
 } from '../logic/invites.js';
 
 export const hashInviteCode = (code) => crypto.createHash('sha256').update(code).digest('hex');
 
 // origin: 'https://host[:port]'. The browser route that shows the invite.
-export const inviteUrl = (origin, code) => `${origin.replace(/\/+$/, '')}/invite/${code}`;
+export const inviteUrl = (origin, code) => `${origin.replace(/\/+$/, '')}${invitePath(code)}`;
 
 const ownerExists = (db) => Boolean(db.prepare('SELECT 1 FROM users WHERE role = ? LIMIT 1').get(USER_ROLES.owner));
 
@@ -37,7 +37,7 @@ export function makeInvites(db) {
   const byHash = db.prepare('SELECT * FROM invites WHERE code_hash = ?');
   const byId = db.prepare('SELECT * FROM invites WHERE id = ?');
   const markUsed = db.prepare('UPDATE invites SET used_by = ?, used_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL');
-  const markRevoked = db.prepare('UPDATE invites SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL');
+  const markRevoked = db.prepare('UPDATE invites SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL AND used_at IS NULL');
   const listRows = db.prepare(`
     SELECT i.id, i.role, i.created_at, i.expires_at, i.used_at, i.revoked_at,
       u.id AS user_id, u.name AS user_name, u.email AS user_email

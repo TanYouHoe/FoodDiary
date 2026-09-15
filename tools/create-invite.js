@@ -16,8 +16,8 @@ import { openDatabase } from '../server/db.js';
 import { createInvite, inviteUrl } from '../server/invites.js';
 import { databasePathIn, defaultTimeZoneFromEnv } from '../server/paths.js';
 import { USER_ROLES } from '../logic/access.js';
+import { DEV_ORIGIN } from '../logic/config.js';
 
-const DEFAULT_ORIGIN = 'http://localhost:3004';
 const USAGE = 'Usage: node tools/create-invite.js --db <path> [--owner]  (or set FOOD_DIARY_DATA_DIR)';
 
 // The database path from --db <path>, else FOOD_DIARY_DATA_DIR, else null.
@@ -44,7 +44,7 @@ export function runCreateInvite({ args, env, now, openDb, print }) {
       return { exitCode: 1 };
     }
     print(`${result.invite.role} invite, valid until ${result.invite.expires_at}:`);
-    print(inviteUrl(env.PUBLIC_ORIGIN || DEFAULT_ORIGIN, result.invite.code));
+    print(inviteUrl(env.PUBLIC_ORIGIN || DEV_ORIGIN, result.invite.code));
     return { exitCode: 0 };
   } finally {
     db.close();

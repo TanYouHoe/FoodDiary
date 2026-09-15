@@ -10,6 +10,7 @@ import { callApi } from './helpers/http.js';
 import { inviteCode } from './helpers/invites.js';
 import { openDatabase } from '../server/db.js';
 import { createApp } from '../server/app.js';
+import { makeInvites } from '../server/invites.js';
 import { INVITE_LIFETIME_MS } from '../logic/invites.js';
 
 const KL = 'Asia/Kuala_Lumpur';
@@ -34,7 +35,7 @@ describe('API account invites', () => {
     call('POST', '/auth/register', { body: { name, email: `${name}@inv.test`, password: 'pw', invite_code, ...extra } });
   const role = (email) => db.prepare('SELECT role FROM users WHERE email = ?').get(email)?.role;
   const inviteRow = (code) => db.prepare('SELECT * FROM invites WHERE code_hash = ?').get(createHash('sha256').update(code).digest('hex'));
-  const check = async (code) => (await call('GET', `/invites/check/${encodeURIComponent(code)}`)).body;
+  const check = async (code) => (await call('POST', '/invites/check', { body: { code } })).body;
   const listen = async (options) => {
     const { app } = createApp({
       db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: KL, now: () => clock,
@@ -122,6 +123,17 @@ describe('API account invites', () => {
     assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users WHERE email IN ('race1@inv.test', 'race2@inv.test')").get().c, 1);
   });
 
+  it('same email, two valid invites at once: one 201, one 409, and the losing invite still works', async () => {
+    const codes = [inviteCode(db, { now: clock }), inviteCode(db, { now: clock })];
+    const results = await Promise.all(codes.map(code =>
+      call('POST', '/auth/register', { body: { name: 'Twin', email: 'twin@inv.test', password: 'pw', invite_code: code } })));
+    assert.deepEqual(results.map(r => r.status).sort(), [201, 409]);
+    const loser = codes[results.findIndex(r => r.status === 409)];
+    assert.deepEqual(results.find(r => r.status === 409).body, { error: 'Email already registered' });
+    assert.deepEqual(await check(loser), { valid: true });
+    assert.equal(inviteRow(loser).used_at, null);
+  });
+
   it('owner routes: only the owner creates, lists and revokes', async () => {
     assert.equal((await call('POST', '/invites')).status, 401);
     assert.equal((await call('GET', '/invites')).status, 401);
@@ -186,26 +198,51 @@ describe('API account invites', () => {
     assert.equal(inviteRow(code).revoked_at, null);
   });
 
-  it('check never reveals more than valid', async () => {
-    assert.deepEqual(await call('GET', '/invites/check/nope'), { status: 200, body: { valid: false } });
+  it('check is POST { code } and never reveals more than valid', async () => {
+    assert.deepEqual(await call('POST', '/invites/check', { body: { code: 'nope' } }), { status: 200, body: { valid: false } });
+    assert.deepEqual(await call('POST', '/invites/check', { body: {} }), { status: 200, body: { valid: false } });
+    assert.deepEqual(await call('POST', '/invites/check'), { status: 200, body: { valid: false } });
+    assert.equal((await call('GET', '/invites/check/nope')).status, 401, 'no GET check route');
+  });
+
+  it('the store never revokes a used invite', async () => {
+    const code = inviteCode(db, { now: clock });
+    assert.equal((await signUp('used-then-revoked', code)).status, 201);
+    makeInvites(db).revoke(inviteRow(code).id, clock);
+    assert.equal(inviteRow(code).revoked_at, null);
+  });
+
+  it('google: an unverified email is refused before any lookup or insert', async () => {
+    const UNVERIFIED = { status: 401, body: { error: 'Google account email is not verified' } };
+    google.payload = { email: 'mia@inv.test', name: 'Mia', picture: 'https://example.test/mia.png', email_verified: false };
+    assert.deepEqual(await call('POST', '/auth/google', { body: { credential: 'fake' } }), UNVERIFIED);
+    assert.equal(db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(member.id).avatar_url, null, 'existing user untouched');
+
+    const code = inviteCode(db, { now: clock });
+    for (const email_verified of [undefined, 'true', 1]) {
+      google.payload = { email: 'unverified@inv.test', name: 'U', email_verified };
+      assert.deepEqual(await call('POST', '/auth/google', { body: { credential: 'fake', invite_code: code } }), UNVERIFIED, String(email_verified));
+    }
+    assert.equal(role('unverified@inv.test'), undefined);
+    assert.deepEqual(await check(code), { valid: true });
   });
 
   it('google: a new email needs a valid invite', async () => {
-    google.payload = { email: 'gina@inv.test', name: 'Gina', picture: null };
+    google.payload = { email: 'gina@inv.test', name: 'Gina', picture: null, email_verified: true };
     assert.deepEqual(await call('POST', '/auth/google', { body: { credential: 'fake' } }), { status: 403, body: INVITE_REQUIRED });
     assert.deepEqual(await call('POST', '/auth/google', { body: { credential: 'fake', invite_code: 'nope' } }), { status: 403, body: INVITE_REQUIRED });
     assert.equal(role('gina@inv.test'), undefined);
 
     const code = inviteCode(db, { now: clock });
     const r = await call('POST', '/auth/google', { body: { credential: 'fake', invite_code: code } });
-    assert.equal(r.status, 200);
+    assert.equal(r.status, 201, 'a new account answers 201 like register');
     assert.equal(r.body.user.email, 'gina@inv.test');
     assert.equal(r.body.user.role, 'member');
     assert.equal(inviteRow(code).used_by, r.body.user.id);
   });
 
   it('google: an existing email signs in without an invite', async () => {
-    google.payload = { email: 'mia@inv.test', name: 'Mia' };
+    google.payload = { email: 'mia@inv.test', name: 'Mia', email_verified: true };
     const r = await call('POST', '/auth/google', { body: { credential: 'fake' } });
     assert.equal(r.status, 200);
     assert.equal(r.body.user.id, member.id);

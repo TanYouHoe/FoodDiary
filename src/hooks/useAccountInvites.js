@@ -18,6 +18,7 @@ export function useAccountInvites(enabled) {
 
   const load = async () => {
     setLoading(true);
+    setError('');
     try {
       setInvites(await api.getAccountInvites());
     } catch (err) {
@@ -48,8 +49,12 @@ export function useAccountInvites(enabled) {
 
   const copy = async () => {
     if (!created) return;
-    await copyText(created.url);
-    setCopied(true);
+    try {
+      await copyText(created.url);
+      setCopied(true);
+    } catch {
+      setError('Could not copy the link. Select it and copy it by hand.');
+    }
   };
 
   const revoke = async (id) => {

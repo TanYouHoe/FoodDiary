@@ -2,8 +2,18 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   INVITE_LIFETIME_MS, inviteExpiresAt, inviteStatus, canManageInvites, inviteCreationRefusal,
-  canUseInvite, inviteRevokeRefusal, canOfferRevoke, API_INVITE_ROLE, OWNER_EXISTS, INVALID_INVITE_ROLE, INVITE_ALREADY_USED,
+  canUseInvite, inviteRevokeRefusal, canOfferRevoke, API_INVITE_ROLE, invitePath, INVITE_ROUTE, OWNER_EXISTS, INVALID_INVITE_ROLE, INVITE_ALREADY_USED,
 } from '../logic/invites.js';
+
+describe('invitePath', () => {
+  it('is the browser route with the code', () => {
+    assert.equal(invitePath('abc_DEF-123'), '/invite/abc_DEF-123');
+    assert.equal(INVITE_ROUTE, '/invite/:code');
+  });
+  it('matches the route pattern', () => {
+    assert.equal(invitePath('x'), INVITE_ROUTE.replace(':code', 'x'));
+  });
+});
 
 describe('API_INVITE_ROLE', () => {
   it('invites made through the API are member invites', () => assert.equal(API_INVITE_ROLE, 'member'));

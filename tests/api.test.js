@@ -665,7 +665,7 @@ describe('API ownership and access', () => {
   });
 
   it('google sign-in of an existing user returns the adopted avatar', async () => {
-    google.payload = { email: 'amy@own.test', name: 'Amy', picture: 'https://example.test/amy.png' };
+    google.payload = { email: 'amy@own.test', name: 'Amy', picture: 'https://example.test/amy.png', email_verified: true };
     const r = await call('POST', '/auth/google', { at, body: { credential: 'fake' } });
     assert.equal(r.status, 200);
     assert.equal(r.body.user.avatar_url, 'https://example.test/amy.png');

@@ -10,6 +10,11 @@ export const INVITE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 // Random bytes in an account invite code.
 export const ACCOUNT_INVITE_CODE_BYTES = 24;
 
+// The browser route that shows an invite, and the path for one code. The
+// server builds links with invitePath; the browser router uses INVITE_ROUTE.
+export const INVITE_ROUTE = '/invite/:code';
+export const invitePath = (code) => INVITE_ROUTE.replace(':code', encodeURIComponent(code));
+
 // Invites made through the API give the member role. The first owner comes
 // only from the command line (tools/create-invite.js --owner).
 export const API_INVITE_ROLE = USER_ROLES.member;

@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canChangeRestaurant, canDeleteRestaurant, canChangeMeal, canDeletePlanned, canChangeCatalogEntry,
-  catalogChangeRefusal, canUseGroup, ownerToPromote, NOT_ALLOWED,
+  catalogChangeRefusal, canUseGroup, ownerToPromote, ownerPromotion, NOT_ALLOWED,
 } from '../logic/access.js';
 
 const owner = { id: 1, role: 'owner' };
@@ -100,5 +100,21 @@ describe('ownerToPromote', () => {
     const copy = structuredClone(users);
     ownerToPromote(users, legacy);
     assert.deepEqual(users, copy);
+  });
+});
+
+describe('ownerPromotion', () => {
+  const members = [{ id: 7, role: 'member' }, { id: 3, role: 'member' }];
+  it('promotes and ends the legacy rule in a legacy database with no owner', () => {
+    assert.deepEqual(ownerPromotion(members, { hadUsersBeforeInvites: true }), { promoteId: 3, endLegacy: true });
+  });
+  it('ends the legacy rule without promoting when an owner exists', () => {
+    assert.deepEqual(ownerPromotion([...members, { id: 9, role: 'owner' }], { hadUsersBeforeInvites: true }), { promoteId: null, endLegacy: true });
+  });
+  it('does nothing in a database that was never legacy', () => {
+    assert.deepEqual(ownerPromotion(members, { hadUsersBeforeInvites: false }), { promoteId: null, endLegacy: false });
+  });
+  it('keeps the legacy rule while there are no users to promote', () => {
+    assert.deepEqual(ownerPromotion([], { hadUsersBeforeInvites: true }), { promoteId: null, endLegacy: false });
   });
 });

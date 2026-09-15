@@ -10,8 +10,9 @@ import { notAllowed, notFound } from '../guards.js';
 export function inviteRoutes({ db, invites, authenticate, now, publicOrigin }) {
   const r = Router();
 
-  // Answers only whether the code works now.
-  r.get('/check/:code', (req, res) => res.json({ valid: invites.isUsable(req.params.code, now()) }));
+  // Body { code }. Answers only whether the code works now. POST keeps the
+  // code out of URLs and access logs.
+  r.post('/check', (req, res) => res.json({ valid: invites.isUsable(req.body?.code, now()) }));
 
   r.use(authenticate, (req, res, next) => (canManageInvites(req.user) ? next() : notAllowed(res)));
 

@@ -81,8 +81,8 @@ The tests need no running server. `tests/api.test.js` builds the app on an in-me
 | `JWT_SECRET`            | server  | `food-diary-dev-secret` | HMAC secret for signing JWTs. **Set a real value in production** — the fallback is insecure. |
 | `GOOGLE_CLIENT_ID`      | server  | _(unset)_               | Google OAuth client ID; the audience that Google ID tokens are verified against. Required for Google Sign-In. |
 | `DEFAULT_TIME_ZONE`     | server  | `Asia/Kuala_Lumpur`     | IANA time zone for users whose browser has not sent one yet. The server refuses to start with an unknown zone. |
-| `PUBLIC_ORIGIN`         | server, `tools/create-invite.js` | _(request origin)_ / `http://localhost:3004` | Origin of account invite links, e.g. `https://food.example.com`. |
-| `VITE_GOOGLE_CLIENT_ID` | client  | _(unset)_               | Same client ID, exposed to the front end (read in `src/pages/Login.jsx`). Set in `.env`. If unset, the Google button is hidden. |
+| `PUBLIC_ORIGIN`         | server, `tools/create-invite.js` | _(request origin)_ / `http://localhost:3004` | Origin of account invite links, e.g. `https://food.example.com`. **Required in production, and must be https**; the server refuses to start otherwise. Outside production, http also works and an unset value uses the request's origin. |
+| `VITE_GOOGLE_CLIENT_ID` | client  | _(unset)_               | Same client ID, exposed to the front end (read in `src/config.js`, used through `src/hooks/useGoogleButton.js`). Set in `.env`. If unset, the Google button is hidden. |
 
 Server-side env vars (`PORT`, `JWT_SECRET`, `GOOGLE_CLIENT_ID`) come from the process environment. The client-side `VITE_GOOGLE_CLIENT_ID` is read from `.env` at build/dev time by Vite. A Google OAuth client and its `client_secret_*.json` are gitignored.
 
@@ -98,7 +98,7 @@ All routes are JSON. Every route except the auth endpoints and `/api/health` req
 | `POST` | `/api/auth/register` | Register `{ name, email, password, invite_code }` → `{ token, user }`. 403 without a valid invite. |
 | `POST` | `/api/auth/login`    | Login `{ email, password }` → `{ token, user }`.        |
 | `GET`  | `/api/auth/me`       | Current user (auth required).                           |
-| `POST` | `/api/auth/google`   | Exchange a Google ID token `{ credential, invite_code? }` → `{ token, user }`. A new email needs `invite_code`. |
+| `POST` | `/api/auth/google`   | Exchange a Google ID token `{ credential, invite_code? }` → `{ token, user }`: 200 for an existing account, 201 for a new one (needs `invite_code`). A token whose email Google has not verified gets 401. |
 
 ### Account invites
 
@@ -115,7 +115,7 @@ The tool refuses to run unless the database is named: `--db <path>`, or `FOOD_DI
 
 | Method   | Path                         | Description                                                   |
 | -------- | ---------------------------- | ------------------------------------------------------------ |
-| `GET`    | `/api/invites/check/:code`   | Public. `{ valid }` and nothing else.                        |
+| `POST`   | `/api/invites/check`         | Public. Body `{ code }` → `{ valid }` and nothing else.       |
 | `POST`   | `/api/invites`               | Owner. Create a member invite → `{ id, code, url, role, expires_at }`. |
 | `GET`    | `/api/invites`               | Owner. List invites with status and who used them; no codes. |
 | `DELETE` | `/api/invites/:id`           | Owner. Revoke (404 if missing, 409 if already used).         |

@@ -60,7 +60,7 @@ export const api = {
   getMe: () => request(`${API}/auth/me`),
 
   // Account invites (sign-up links; not group invite codes)
-  checkAccountInvite: (code) => request(`${API}/invites/check/${encodeURIComponent(code)}`),
+  checkAccountInvite: (code) => send('POST', `${API}/invites/check`, { code }),
   getAccountInvites: () => request(`${API}/invites`),
   createAccountInvite: () => send('POST', `${API}/invites`, {}),
   revokeAccountInvite: (id) => request(`${API}/invites/${id}`, { method: 'DELETE' }),

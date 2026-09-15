@@ -1,12 +1,24 @@
 // Connector: loads Google's browser scripts (Identity Services and Maps).
 
+// Calls onLoad(identity) once Google Identity Services is ready. Reuses the
+// library when a page already loaded it. Returns a stop function: after it,
+// a late load calls nothing.
 export function loadGoogleIdentity(onLoad) {
+  let live = true;
+  const loaded = window.google?.accounts?.id;
+  if (loaded) {
+    onLoad(loaded);
+    return () => { live = false; };
+  }
   const script = document.createElement('script');
   script.src = 'https://accounts.google.com/gsi/client';
   script.async = true;
-  script.onload = () => onLoad(window.google.accounts.id);
+  script.onload = () => { if (live) onLoad(window.google.accounts.id); };
   document.head.appendChild(script);
-  return () => { document.head.removeChild(script); };
+  return () => {
+    live = false;
+    script.remove();
+  };
 }
 
 export function loadGoogleMaps(key) {
