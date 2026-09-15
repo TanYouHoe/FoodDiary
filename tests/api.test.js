@@ -437,6 +437,7 @@ describe('API ownership and access', () => {
     assert.equal((await req('PUT', `/meal-types/${type.id}`, olive, body)).status, 200);
     assert.equal((await req('DELETE', `/meal-types/${type.id}`, amy)).status, 204);
     assert.deepEqual(await req('DELETE', `/meal-types/${type.id}`, amy), { status: 404, body: { error: 'Meal type not found' } });
+    assert.deepEqual(await req('PUT', '/meal-types/9999', amy, body), { status: 404, body: { error: 'Meal type not found' } });
 
     const orphan = db.prepare("INSERT INTO meal_types (name, slots) VALUES ('Old', '[{\"name\":\"Main\"}]')").run().lastInsertRowid;
     assert.deepEqual(await req('PUT', `/meal-types/${orphan}`, amy, body), { status: 403, body: NOT_ALLOWED });
@@ -455,6 +456,7 @@ describe('API ownership and access', () => {
     assert.deepEqual(await req('PUT', `/dish-types/${type.id}`, amy, { name: '  ' }), { status: 400, body: { error: 'Name is required' } });
     assert.equal((await req('DELETE', `/dish-types/${type.id}`, amy)).status, 204);
     assert.deepEqual(await req('DELETE', '/dish-types/9999', amy), { status: 404, body: { error: 'Dish type not found' } });
+    assert.deepEqual(await req('PUT', '/dish-types/9999', amy, { name: 'Stew' }), { status: 404, body: { error: 'Dish type not found' } });
 
     const orphan = db.prepare("INSERT INTO dish_types (name) VALUES ('Orphan')").run().lastInsertRowid;
     assert.deepEqual(await req('DELETE', `/dish-types/${orphan}`, amy), { status: 403, body: NOT_ALLOWED });
