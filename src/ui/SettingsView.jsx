@@ -157,9 +157,9 @@ export function DishTypeDialog({ isEdit, name, error, submitting, onName, onSubm
 }
 
 export default function SettingsView({
-  tabs, activeTab, loading, error, dark, mealTypes, dishTypes, changeableMealTypeIds, changeableDishTypeIds, profile,
+  tabs, activeTab, loading, error, dark, canInstall, mealTypes, dishTypes, changeableMealTypeIds, changeableDishTypeIds, profile,
   confirmMealTypeId, confirmDishTypeId, mealTypeDialog, dishTypeDialog, securityTab, invitesTab,
-  onTab, onClose, onToggleDark,
+  onTab, onClose, onToggleDark, onInstall,
   onAddMealType, onEditMealType, onAskDeleteMealType, onCancelDeleteMealType, onDeleteMealType,
   onAddDishType, onEditDishType, onAskDeleteDishType, onCancelDeleteDishType, onDeleteDishType,
 }) {
@@ -207,6 +207,17 @@ export default function SettingsView({
                       </button>
                     </div>
                   </div>
+                  {canInstall && (
+                    <div className="settings-item">
+                      <div className="settings-item-info">
+                        <span className="settings-item-name">Install app</span>
+                        <span className="settings-item-desc">Add Food Diary to your home screen or desktop</span>
+                      </div>
+                      <div className="settings-item-actions">
+                        <button className="btn-primary btn-sm" onClick={onInstall}>Install</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -26,6 +26,8 @@ The code follows the four-layer standard (`docs/standards/four-layer.md` in the 
 | `logic/` | Logic | Business rules. Pure functions, shared by the server and the browser. |
 | `server/` | Connector | `app.js` composition root, `db.js`, `routes/*`, auth, uploads, the suggestion and profile stores. SQL lives here, rules do not. |
 | `server.js` | Connector | Entry point: reads the environment, opens the database, listens. |
+| `pwa.config.js` | Logic (plain options) | The PWA manifest and Workbox options, read by `vite.config.js`. |
+| `tools/icon-image.mjs`, `tools/make-icons.mjs` | Logic, Connector | The icon art and PNG encoder; the script that writes the icons into `public/`. |
 | `src/api.js`, `src/token-store.js`, `src/config.js`, `src/google.js`, `src/clipboard.js` | Connector | The browser's HTTP client, token storage, build settings, Google scripts, clipboard. |
 | `src/ui/` | UI | Views (props in, markup out) and the pure functions that shape data into props. No hooks. |
 | `src/hooks/`, `src/widgets/`, `src/pages/`, `src/App.jsx`, `src/AuthContext.jsx` | UI connector | Hooks, and the components that load data, hold state and pass props and slots to the views. |
@@ -95,9 +97,20 @@ The tests need no running server. `tests/api.test.js` builds the app on an in-me
 
 - **CORS** — only `PUBLIC_ORIGIN` (plus `http://localhost:5176` outside production) gets CORS headers. Any other origin gets none, and its preflight is not approved. Same-origin requests need no CORS.
 - **Security headers** on every response: a Content-Security-Policy (`default-src 'self'`; scripts only from this origin, Google Identity Services and Google Maps, never inline or eval; inline styles allowed because React style attributes and Google's widgets need them; Google's image, font and API hosts for avatars and maps; `frame-ancestors 'none'`; `/uploads` answers get `default-src 'none'; img-src 'self'; sandbox` instead), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: geolocation=(self), camera=(), microphone=()`, `Cross-Origin-Opener-Policy: same-origin-allow-popups` (Google sign-in popups), and `Strict-Transport-Security` when `PUBLIC_ORIGIN` is https. The values are built in `logic/http-policy.js`.
-- **Caching** — `index.html` (also as the SPA fallback), `sw.js` and `manifest.webmanifest` are `no-cache`; hashed build files under `/assets/` are cached for a year (`immutable`).
+- **Caching** — `index.html` (also as the SPA fallback), `sw.js` and `manifest.webmanifest` are `no-cache`; hashed build files under `/assets/` and the hashed `workbox-<hash>.js` at the root are cached for a year (`immutable`). The manifest is served as `application/manifest+json`.
 - **Body limit** — JSON bodies over 1 MB answer 413 with a JSON error.
 - **No HTML for a missing file** — an unknown `/api` path answers JSON 404 for any method, a missing `/assets/` file a bare 404, and a missing or refused `/uploads` file JSON 404 (403 for a dot file). Only other paths get the SPA fallback.
+
+### Installable app (PWA)
+
+The production build (`npm run build`) is a Progressive Web App: [`vite-plugin-pwa`](https://vite-pwa-org.netlify.app) writes `dist/manifest.webmanifest` and a Workbox service worker `dist/sw.js`. The options (manifest and Workbox) are in [`pwa.config.js`](pwa.config.js). The worker is off in `npm run dev`. Installing needs HTTPS (or `localhost`).
+
+- **Install on Android / desktop Chrome or Edge** — open the app, then **Settings → Appearance → Install app** (the row shows when the browser offers installation), or use the browser menu's *Install app* / *Add to Home screen*.
+- **Install on iPhone / iPad** — open the app in Safari, tap **Share → Add to Home Screen**. iOS uses `apple-touch-icon.png` and the `apple-mobile-web-app-*` tags in `index.html`.
+- **Updates** — a new deploy does not replace the running version by itself. When the browser finds a new `sw.js` (on load, and every hour while the app is open), a banner says *A new version of Food Diary is ready.* **Reload** switches to it and reloads the page; **Later** keeps the current version until the next time the app starts with no open window. The banner is registered from the app's own script (`src/hooks/useAppUpdate.js`), never an inline script, so the CSP stays `script-src 'self'`.
+- **What is cached** — the built app shell (scripts, styles, `index.html`, the manifest and the icons), so the app opens offline; page navigations fall back to the cached `index.html`. Photos under `/uploads/` are cached first-served (cache `photos`, at most 200, for 30 days, only `200` answers — never a 404, 403 or opaque answer).
+- **What is never cached** — anything under `/api/` (a `NetworkOnly` route): no meals, sessions, tokens or account data are stored by the worker. Navigations to `/api/`, `/uploads/` and `/assets/` never get the cached `index.html`.
+- **Icons** — `public/pwa-192x192.png`, `public/pwa-512x512.png`, `public/maskable-512x512.png` (the mark inside the 80% safe zone) and `public/apple-touch-icon.png` (180×180) are committed. They are drawn by code; to change them, edit `tools/icon-image.mjs` (or the colours in `pwa.config.js`) and run `node tools/make-icons.mjs`. The tool writes only into `public/`.
 
 ## API
 
@@ -221,6 +234,7 @@ The tool refuses to run unless the database is named: `--db <path>`, or `FOOD_DI
 | Path             | Description                                                  |
 | ---------------- | ---------------------------------------------------------- |
 | `/uploads/*`     | Uploaded restaurant/meal photos.                          |
+| `/sw.js`, `/workbox-*.js`, `/manifest.webmanifest`, icons | The PWA service worker, its runtime, the manifest and the icons (from `dist/`). |
 | `*` (catch-all)  | Serves `dist/index.html` for client-side routing.          |
 
 ## Recommendation engine

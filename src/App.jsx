@@ -1,12 +1,15 @@
 // UI connector: the router, the theme, the sidebar and the settings dialog
-// around the signed-in pages.
+// around the signed-in pages, and the app-update banner over every screen.
 
 import { useState, useEffect } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { INVITE_ROUTE } from '../logic/invites.js';
 import { useTheme } from './hooks/useTheme.js';
+import { useAppUpdate } from './hooks/useAppUpdate.js';
+import { useInstallPrompt } from './hooks/useInstallPrompt.js';
 import AppShell from './ui/AppShell.jsx';
+import UpdateBanner from './ui/UpdateBanner.jsx';
 import Login from './pages/Login';
 import Invite from './pages/Invite';
 import MfaStep from './pages/MfaStep';
@@ -36,6 +39,21 @@ const NAV = (
 );
 
 function App() {
+  const appUpdate = useAppUpdate();
+  const installPrompt = useInstallPrompt();
+  const banner = (
+    <UpdateBanner
+      needRefresh={appUpdate.needRefresh}
+      offlineReady={appUpdate.offlineReady}
+      onReload={appUpdate.update}
+      onDismiss={appUpdate.dismiss}
+    />
+  );
+  return <><Screen installPrompt={installPrompt} />{banner}</>;
+}
+
+// The screen for the session state: loading, sign-in steps or the signed-in app.
+function Screen({ installPrompt }) {
   const { user, loading, logout, mfaPending, needsEnrollment } = useAuth();
   const { dark, toggleDark } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -75,7 +93,13 @@ function App() {
       onSidebarSettings={() => { setSidebarOpen(false); setTimeout(() => setShowSettings(true), SIDEBAR_CLOSE_MS); }}
       onLogout={logout}
       overlay={showSettings && (
-        <SettingsModal dark={dark} onToggleDark={toggleDark} onClose={() => setShowSettings(false)} />
+        <SettingsModal
+          dark={dark}
+          onToggleDark={toggleDark}
+          canInstall={installPrompt.canInstall}
+          onInstall={installPrompt.install}
+          onClose={() => setShowSettings(false)}
+        />
       )}
     >
       <Routes>

@@ -19,7 +19,8 @@ import AddMealTypeModal from './AddMealTypeModal.jsx';
 // kind: 'meal' | 'dish'. The server refuses edit and delete for the same entries.
 const canChangeCatalog = (kind) => (user, entry) => catalogChangeRefusal(user, entry, kind, 'edit') === null;
 
-export default function SettingsModal({ dark, onToggleDark, onClose }) {
+// canInstall, onInstall: the browser's install offer (src/hooks/useInstallPrompt.js, held by App).
+export default function SettingsModal({ dark, onToggleDark, canInstall, onInstall, onClose }) {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('appearance');
   const [mealTypes, setMealTypes] = useState([]);
@@ -91,6 +92,7 @@ export default function SettingsModal({ dark, onToggleDark, onClose }) {
       loading={loading}
       error={error}
       dark={dark}
+      canInstall={canInstall}
       mealTypes={mealTypes}
       dishTypes={dishTypes}
       changeableMealTypeIds={allowedIds(user, mealTypes, canChangeCatalog('meal'))}
@@ -137,6 +139,7 @@ export default function SettingsModal({ dark, onToggleDark, onClose }) {
       onTab={setActiveTab}
       onClose={onClose}
       onToggleDark={onToggleDark}
+      onInstall={onInstall}
       onAddMealType={() => setMealTypeDialog({ mealType: null })}
       onEditMealType={(mealType) => setMealTypeDialog({ mealType })}
       onAskDeleteMealType={setConfirmMealTypeId}
