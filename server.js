@@ -8,9 +8,11 @@
 //   DEFAULT_TIME_ZONE IANA zone for users whose browser has not sent one (default Asia/Kuala_Lumpur)
 //   PUBLIC_ORIGIN     origin of account invite links; required (https) in production,
 //                     elsewhere the request's own origin when unset
+//   REQUIRE_TOTP      '1' requires an authenticator app for every account, '0' does not;
+//                     unset: required when NODE_ENV=production
 
 import { mkdirSync } from 'node:fs';
-import { checkServerConfig, DEV_JWT_SECRET, DEFAULT_PORT } from './logic/config.js';
+import { checkServerConfig, shouldRequireTotp, DEV_JWT_SECRET, DEFAULT_PORT } from './logic/config.js';
 import { openDatabase } from './server/db.js';
 import { createApp } from './server/app.js';
 import { DATABASE_PATH, UPLOADS_DIR, DIST_DIR, defaultTimeZoneFromEnv } from './server/paths.js';
@@ -22,6 +24,7 @@ const problems = checkServerConfig({
   jwtSecret: process.env.JWT_SECRET,
   defaultTimeZone: process.env.DEFAULT_TIME_ZONE,
   publicOrigin: process.env.PUBLIC_ORIGIN,
+  requireTotp: process.env.REQUIRE_TOTP,
 });
 if (problems.length > 0) {
   for (const problem of problems) console.error(problem);
@@ -42,6 +45,7 @@ const { app } = createApp({
   googleClientId: process.env.GOOGLE_CLIENT_ID,
   defaultTimeZone: TIME_ZONE,
   publicOrigin: process.env.PUBLIC_ORIGIN || null,
+  requireTotp: shouldRequireTotp({ requireTotp: process.env.REQUIRE_TOTP, nodeEnv: process.env.NODE_ENV }),
   log,
 });
 

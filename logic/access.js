@@ -56,6 +56,21 @@ export function canUseGroup(groupId, membership) {
   return groupId === null || Boolean(membership);
 }
 
+export const OWN_FACTOR_RESET = 'Replace your own authenticator in Security settings';
+
+// The user list (with two-factor status) is for the owner.
+export function canListUsers(user) {
+  return isOwner(user);
+}
+
+// Resetting another user's second factor: the owner only, and never their own
+// (an owner who lost it cannot sign in to do it anyway; with it they replace it).
+// targetId: the user id to reset. Returns the refusal text, or null.
+export function totpResetRefusal(user, targetId) {
+  if (!isOwner(user)) return NOT_ALLOWED;
+  return targetId === user.id ? OWN_FACTOR_RESET : null;
+}
+
 // users: [{ id, role }]. hadUsersBeforeInvites: the database held users when
 // account invites arrived. Only such a database promotes: the lowest id becomes
 // owner when nobody is. A newer database gets its owner from an owner invite,

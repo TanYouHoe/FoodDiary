@@ -112,6 +112,21 @@ const SCHEMA = `
     key TEXT PRIMARY KEY,
     value TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS backup_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    used_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS backup_codes_user ON backup_codes(user_id);
+
+  CREATE TABLE IF NOT EXISTS auth_failures (
+    key TEXT PRIMARY KEY,
+    count INTEGER NOT NULL,
+    window_start INTEGER NOT NULL,
+    locked_until INTEGER
+  );
 `;
 
 const INVITES_TABLE = `
@@ -152,6 +167,11 @@ const ADDED_COLUMNS = [
   ['dish_types', 'created_by', 'INTEGER REFERENCES users(id)'],
   ['users', 'timezone', 'TEXT'],
   ['users', 'timezone_updated_at', 'TEXT'],
+  ['users', 'totp_secret', 'TEXT'],
+  ['users', 'totp_pending_secret', 'TEXT'],
+  ['users', 'totp_enabled_at', 'TEXT'],
+  ['users', 'totp_last_step', 'INTEGER'],
+  ['users', 'token_version', 'INTEGER NOT NULL DEFAULT 0'],
 ];
 
 function migrate(db) {

@@ -1,5 +1,7 @@
-// Connector: register, login, current user and Google sign-in. A new account
-// needs an account invite (server/invites.js); the invite gives its role.
+// Connector: register, login, the second-factor step, current user, sign-out
+// everywhere and Google sign-in. A new account needs an account invite
+// (server/invites.js); the invite gives its role. What a correct first factor
+// leads to is server/sessions.js; failures count toward logic/lockout.js.
 
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
@@ -9,7 +11,9 @@ import {
   EMAIL_TAKEN, GOOGLE_EMAIL_NOT_VERIFIED,
 } from '../../logic/accounts.js';
 import { INVITE_REQUIRED } from '../../logic/invites.js';
-import { pick, USER_FIELDS } from '../rows.js';
+import { loginKeys, codeKeys, publicKeys } from '../../logic/lockout.js';
+import { isCurrentTokenVersion, CODE_REQUIRED, INVALID_CODE, INVALID_MFA_TOKEN } from '../../logic/two-factor.js';
+import { tooManyAttempts } from '../lockout-store.js';
 
 const BCRYPT_ROUNDS = 10;
 
@@ -18,25 +22,19 @@ const emailTaken = (res) => res.status(409).json({ error: EMAIL_TAKEN });
 const isUniqueViolation = (err) => err?.code === 'SQLITE_CONSTRAINT_UNIQUE';
 
 // now: () => Date.
-export function authRoutes({ db, tokens, authenticate, verifyGoogle, googleClientId, invites, now }) {
+export function authRoutes({ db, authenticate, verifyGoogle, googleClientId, invites, tokens, twoFactor, lockout, sessions, now }) {
   const r = Router();
-  const byEmail = db.prepare('SELECT * FROM users WHERE email = ?');
-  const byId = db.prepare('SELECT id, name, email, avatar_url, role, timezone, created_at FROM users WHERE id = ?');
+  const byEmail = db.prepare('SELECT id, password_hash, avatar_url FROM users WHERE email = ?');
   const insertUser = db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)');
   const insertGoogleUser = db.prepare('INSERT INTO users (name, email, password_hash, avatar_url, role) VALUES (?, ?, ?, ?, ?)');
   const setAvatar = db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?');
 
-  const signedIn = (userId) => {
-    const user = pick(byId.get(userId), USER_FIELDS);
-    return { token: tokens.sign(user.id), user };
-  };
-
   // Uses the invite and inserts the user in one transaction (server/invites.js).
   // insert: (role) => new user id. Answers 403 or 409, or returns the new user id.
-  const redeem = (res, code, insert) => {
+  const redeem = (res, code, at, insert) => {
     let userId;
     try {
-      userId = invites.redeem(code, now(), insert);
+      userId = invites.redeem(code, at, insert);
     } catch (err) {
       // Another request made the same email meanwhile; the invite stays unused.
       if (isUniqueViolation(err)) { emailTaken(res); return null; }
@@ -50,28 +48,56 @@ export function authRoutes({ db, tokens, authenticate, verifyGoogle, googleClien
     const input = checkRegistration(req.body);
     if (!input.ok) return res.status(400).json({ error: input.error });
     const { invite_code: code } = req.body;
-    if (!invites.isUsable(code, now())) return inviteRequired(res);
+    const at = now();
+    const outcome = await lockout.attempt(publicKeys(req.ip), at, () => invites.isUsable(code, at));
+    if (outcome === 'locked') return tooManyAttempts(res);
+    if (outcome === 'failed') return inviteRequired(res);
     const { name, email, password } = input.value;
     if (byEmail.get(email)) return emailTaken(res);
 
     const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     // The invite is checked again inside the transaction: another request may have used it meanwhile.
-    const userId = redeem(res, code, (role) => insertUser.run(name, email, hash, role).lastInsertRowid);
-    if (userId !== null) res.status(201).json(signedIn(userId));
+    const userId = redeem(res, code, now(), (role) => insertUser.run(name, email, hash, role).lastInsertRowid);
+    if (userId !== null) res.status(201).json(sessions.afterFirstFactor(userId));
   });
 
   r.post('/login', async (req, res) => {
     const input = checkLogin(req.body);
     if (!input.ok) return res.status(400).json({ error: input.error });
-    const row = byEmail.get(input.value.email);
-    if (!row) return res.status(401).json({ error: 'Invalid credentials' });
-    if (!(await bcrypt.compare(input.value.password, row.password_hash))) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-    res.json({ token: tokens.sign(row.id), user: pick(row, USER_FIELDS) });
+    let row;
+    const outcome = await lockout.attempt(loginKeys(input.value.email, req.ip), now(), async () => {
+      row = byEmail.get(input.value.email);
+      return Boolean(row) && bcrypt.compare(input.value.password, row.password_hash);
+    });
+    if (outcome === 'locked') return tooManyAttempts(res);
+    if (outcome === 'failed') return res.status(401).json({ error: 'Invalid credentials' });
+    res.json(sessions.afterFirstFactor(row.id));
   });
 
-  r.get('/me', authenticate, (req, res) => res.json(req.user));
+  // Body { mfa_token, code } or { mfa_token, backup_code }.
+  r.post('/mfa', async (req, res) => {
+    const { mfa_token: mfaToken, code, backup_code: backupCode } = req.body ?? {};
+    if (!code && !backupCode) return res.status(400).json({ error: CODE_REQUIRED });
+    const at = now();
+    const claims = tokens.verifyMfa(mfaToken, at);
+    const state = claims && twoFactor.state(claims.id);
+    if (!state || !state.totpEnabled || !isCurrentTokenVersion(claims, state.tokenVersion)) {
+      return res.status(401).json({ error: INVALID_MFA_TOKEN });
+    }
+    const outcome = await lockout.attempt(codeKeys(claims.id, req.ip), at, () =>
+      (code ? twoFactor.useTotp(claims.id, code, at) : twoFactor.useBackupCode(claims.id, backupCode, at)));
+    if (outcome === 'locked') return tooManyAttempts(res);
+    if (outcome === 'failed') return res.status(401).json({ error: INVALID_CODE });
+    res.json(sessions.full(claims.id));
+  });
+
+  r.get('/me', authenticate, (req, res) => res.json(sessions.user(req.user.id)));
+
+  // Raises the token version, so every token issued so far stops working.
+  r.post('/logout-all', authenticate, (req, res) => {
+    twoFactor.bumpTokenVersion(req.user.id);
+    res.status(204).end();
+  });
 
   r.post('/google', async (req, res) => {
     const { credential, invite_code: code } = req.body;
@@ -90,15 +116,15 @@ export function authRoutes({ db, tokens, authenticate, verifyGoogle, googleClien
     const existing = byEmail.get(email);
     if (existing) {
       if (shouldAdoptPicture(picture, existing)) setAvatar.run(picture, existing.id);
-      return res.json(signedIn(existing.id));
+      return res.json(sessions.afterFirstFactor(existing.id));
     }
 
     if (!invites.isUsable(code, now())) return inviteRequired(res);
     // Google accounts get an unguessable password so the password login stays closed.
     const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
-    const userId = redeem(res, code, (role) =>
+    const userId = redeem(res, code, now(), (role) =>
       insertGoogleUser.run(googleAccountName(name, email), email, hash, picture || null, role).lastInsertRowid);
-    if (userId !== null) res.status(201).json(signedIn(userId));
+    if (userId !== null) res.status(201).json(sessions.afterFirstFactor(userId));
   });
 
   return r;

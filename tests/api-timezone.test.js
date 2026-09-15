@@ -35,7 +35,7 @@ describe('API time zones', () => {
     db = openDatabase(':memory:', { defaultTimeZone: KL });
     const { app } = createApp({
       db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: KL,
-      now: () => clock, rng: () => 0.99,
+      now: () => clock, rng: () => 0.99, requireTotp: false,
     });
     await new Promise(resolve => { server = app.listen(0, resolve); });
     at = `http://127.0.0.1:${server.address().port}/api`;

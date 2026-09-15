@@ -49,7 +49,7 @@ before(async () => {
   const { createApp } = await import('../server/app.js');
   const db = openDatabase(':memory:', { defaultTimeZone: 'Asia/Kuala_Lumpur' });
   sharedDb = db;
-  const { app } = createApp({ db, uploadsDir: tmp, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur' });
+  const { app } = createApp({ db, uploadsDir: tmp, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur', requireTotp: false });
   await new Promise(resolve => { server = app.listen(0, resolve); });
   base = `http://127.0.0.1:${server.address().port}/api`;
 });
@@ -399,6 +399,7 @@ describe('API ownership and access', () => {
     db = openDatabase(':memory:', { defaultTimeZone: 'Asia/Kuala_Lumpur' });
     const { app } = createApp({
       db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur', verifyGoogle: async () => google.payload,
+      requireTotp: false,
     });
     await new Promise(resolve => { app2 = app.listen(0, resolve); });
     at = `http://127.0.0.1:${app2.address().port}/api`;

@@ -6,7 +6,7 @@ Self-contained: one SQLite file, one Express process. The server also serves the
 
 ## Features
 
-- **Auth** — email + password (bcrypt hashing, 7-day JWT) and Google Sign-In (verifies Google ID tokens via [`google-auth-library`](https://www.npmjs.com/package/google-auth-library)). Sign-up is **invite only** — see [Account invites](#account-invites).
+- **Auth** — email + password (bcrypt hashing, 7-day JWT) and Google Sign-In (verifies Google ID tokens via [`google-auth-library`](https://www.npmjs.com/package/google-auth-library)). Sign-up is **invite only** — see [Account invites](#account-invites). A second factor (an authenticator app, TOTP) is **required in production** — see [Two-factor sign-in](#two-factor-sign-in).
 - **Restaurants** — CRUD with cuisine / price-range / name-search filters and a single cover photo upload.
 - **Meals** — log a visit with rating (1–5), title, calories, notes, a visit date, structured dishes, and up to 10 photos.
 - **Dishes** — each meal's dishes are auto-categorized by keyword (Soup, Rice, Noodle, …); an aggregated `/api/dishes` view shows what you've eaten, how often, and where.
@@ -82,6 +82,7 @@ The tests need no running server. `tests/api.test.js` builds the app on an in-me
 | `GOOGLE_CLIENT_ID`      | server  | _(unset)_               | Google OAuth client ID; the audience that Google ID tokens are verified against. Required for Google Sign-In. |
 | `DEFAULT_TIME_ZONE`     | server  | `Asia/Kuala_Lumpur`     | IANA time zone for users whose browser has not sent one yet. The server refuses to start with an unknown zone. |
 | `PUBLIC_ORIGIN`         | server, `tools/create-invite.js` | _(request origin)_ / `http://localhost:3004` | Origin of account invite links, e.g. `https://food.example.com`. **Required in production, and must be https**; the server refuses to start otherwise. Outside production, http also works and an unset value uses the request's origin. |
+| `REQUIRE_TOTP`          | server  | `1` in production, else `0` | `1`: every account must bind an authenticator app before it can use the app. `0`: optional. Any other value stops the server. |
 | `VITE_GOOGLE_CLIENT_ID` | client  | _(unset)_               | Same client ID, exposed to the front end (read in `src/config.js`, used through `src/hooks/useGoogleButton.js`). Set in `.env`. If unset, the Google button is hidden. |
 
 Server-side env vars (`PORT`, `JWT_SECRET`, `GOOGLE_CLIENT_ID`) come from the process environment. The client-side `VITE_GOOGLE_CLIENT_ID` is read from `.env` at build/dev time by Vite. A Google OAuth client and its `client_secret_*.json` are gitignored.
@@ -96,9 +97,27 @@ All routes are JSON. Every route except the auth endpoints and `/api/health` req
 | ------ | -------------------- | ------------------------------------------------------- |
 | `GET`  | `/api/health`        | Liveness check — `{ status: "ok" }`.                    |
 | `POST` | `/api/auth/register` | Register `{ name, email, password, invite_code }` → `{ token, user }`. 403 without a valid invite. |
-| `POST` | `/api/auth/login`    | Login `{ email, password }` → `{ token, user }`.        |
-| `GET`  | `/api/auth/me`       | Current user (auth required).                           |
-| `POST` | `/api/auth/google`   | Exchange a Google ID token `{ credential, invite_code? }` → `{ token, user }`: 200 for an existing account, 201 for a new one (needs `invite_code`). A token whose email Google has not verified gets 401. |
+| `POST` | `/api/auth/login`    | Login `{ email, password }` → `{ token, user }`, or `{ mfa_required: true, mfa_token }` when the account has a second factor. |
+| `POST` | `/api/auth/mfa`      | `{ mfa_token, code }` or `{ mfa_token, backup_code }` → `{ token, user }`. The mfa token lasts 5 minutes. |
+| `GET`  | `/api/auth/me`       | Current user (auth required), with `totp_enabled` and `totp_required`. |
+| `POST` | `/api/auth/logout-all` | Ends every session of the user (204).                 |
+| `POST` | `/api/auth/google`   | Exchange a Google ID token `{ credential, invite_code? }` → `{ token, user }` (or the code step): 200 for an existing account, 201 for a new one (needs `invite_code`). A token whose email Google has not verified gets 401. |
+| `POST` | `/api/auth/totp/setup` | → `{ secret, otpauth_url }`. Replacing an enabled factor needs `{ code }` from it. |
+| `POST` | `/api/auth/totp/enable` | `{ code }` from the new secret → `{ backup_codes, token, user }`. |
+| `POST` | `/api/auth/totp/backup-codes` | `{ code }` → `{ backup_codes }` (a new set of 10). |
+| `POST` | `/api/auth/totp/disable` | `{ code }` → `{ token, user }`. 403 when `REQUIRE_TOTP` is on. |
+| `GET`  | `/api/users`         | Owner. Users with `totp_enabled`.                        |
+| `POST` | `/api/users/:id/totp/reset` | Owner, not self. Clears that user's factor and backup codes and ends their sessions. |
+
+### Two-factor sign-in
+
+Every account can bind an authenticator app (Google Authenticator, Aegis, 1Password). With `REQUIRE_TOTP` on (the production default), a user without one gets a session that reaches only `/me`, setup, enable and logout-all; every other route answers 403 `{ code: 'MFA_ENROLL_REQUIRED' }`, and the app shows the setup screen (QR code, setup key, 10 backup codes shown once).
+
+- **Codes** are single use: a code whose 30-second step is not newer than the last accepted step is refused. One step of drift either side is accepted.
+- **Backup codes** (`xxxx-xxxx`) work once each and are stored as SHA-256 hashes. A new set replaces the old one.
+- **Sessions** carry a token version. Sign out everywhere, and enabling, replacing, disabling or resetting the factor, raise it, so older tokens answer 401 `Session expired`.
+- **Lost phone:** the owner resets the user's factor in **Settings → Security**; the user then sets up a new one at the next sign-in. The owner cannot reset their own factor; they replace it in **Settings → Security** with a current code.
+- **Lockout:** 8 failures on one account (password by email, codes by user) or 20 from one IP within 15 minutes lock that key for 15 minutes (429). Registration and the invite check count by IP only. A success clears the account count.
 
 ### Account invites
 

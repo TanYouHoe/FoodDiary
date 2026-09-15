@@ -11,7 +11,12 @@ import { makeGroupAccess } from './guards.js';
 import { rebuildProfile } from './profile-store.js';
 import { resolveTimeZone, isValidTimeZone } from '../logic/meal-period.js';
 import { makeInvites } from './invites.js';
+import { makeLockout } from './lockout-store.js';
+import { makeTwoFactor } from './two-factor.js';
+import { makeSessions } from './sessions.js';
 import { authRoutes } from './routes/auth.js';
+import { totpRoutes } from './routes/totp.js';
+import { userRoutes } from './routes/users.js';
 import { inviteRoutes } from './routes/invites.js';
 import { restaurantRoutes } from './routes/restaurants.js';
 import { mealTypeRoutes, dishTypeRoutes } from './routes/catalog.js';
@@ -32,12 +37,17 @@ export function createApp({
   log = () => {},
   defaultTimeZone,
   publicOrigin = null,
+  requireTotp,
 }) {
   if (!isValidTimeZone(defaultTimeZone)) throw new Error(`createApp: defaultTimeZone must be an IANA time zone, got ${defaultTimeZone}`);
+  if (typeof requireTotp !== 'boolean') throw new Error(`createApp: requireTotp must be a boolean, got ${requireTotp}`);
   const tokens = makeTokens(jwtSecret);
   const upload = makeUpload(uploadsDir);
   const groupAllowed = makeGroupAccess(db);
   const invites = makeInvites(db);
+  const lockout = makeLockout(db);
+  const twoFactor = makeTwoFactor(db);
+  const sessions = makeSessions({ db, tokens, requireTotp, now });
 
   // The profile is derived data. A failed rebuild must not fail the meal change.
   // It is read in the user's stored zone, else the default zone.
@@ -48,7 +58,7 @@ export function createApp({
       rebuildProfile(db, userId, timeZone);
     } catch (err) { log(`[profile] rebuild failed for user ${userId}: ${err.message}`); }
   };
-  const authenticate = makeAuthenticate({ db, tokens, defaultTimeZone, now, onTimeZoneChange: refreshProfile });
+  const authenticate = makeAuthenticate({ db, tokens, defaultTimeZone, now, requireTotp, onTimeZoneChange: refreshProfile });
 
   const app = express();
   app.use(cors());
@@ -59,8 +69,10 @@ export function createApp({
 
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-  app.use('/api/auth', authRoutes({ db, tokens, authenticate, verifyGoogle, googleClientId, invites, now }));
-  app.use('/api/invites', inviteRoutes({ db, invites, authenticate, now, publicOrigin }));
+  app.use('/api/auth/totp', totpRoutes({ authenticate, twoFactor, lockout, sessions, requireTotp, now }));
+  app.use('/api/auth', authRoutes({ db, authenticate, verifyGoogle, googleClientId, invites, tokens, twoFactor, lockout, sessions, now }));
+  app.use('/api/invites', inviteRoutes({ db, invites, authenticate, lockout, now, publicOrigin }));
+  app.use('/api/users', authenticate, userRoutes({ db, twoFactor }));
   app.use('/api/restaurants', authenticate, restaurantRoutes({ db, upload, uploadsDir, refreshProfile }));
   app.use('/api/meal-types', authenticate, mealTypeRoutes({ db }));
   app.use('/api/dish-types', authenticate, dishTypeRoutes({ db }));

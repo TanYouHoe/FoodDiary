@@ -1,6 +1,7 @@
 // Logic: registration, login, sign-in sessions and groups.
 
-export const TOKEN_TTL = '7d';
+// How long a session token lasts.
+export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const OWNER_ROLE = 'owner';
 export const INVITE_CODE_BYTES = 4;
 

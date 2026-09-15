@@ -39,7 +39,7 @@ describe('API account invites', () => {
   const listen = async (options) => {
     const { app } = createApp({
       db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: KL, now: () => clock,
-      verifyGoogle: async () => google.payload, ...options,
+      verifyGoogle: async () => google.payload, requireTotp: false, ...options,
     });
     const server = await new Promise(resolve => { const s = app.listen(0, () => resolve(s)); });
     servers.push(server);
@@ -251,7 +251,7 @@ describe('API account invites', () => {
   it('google: a bad credential is still 401', async () => {
     const { app } = createApp({
       db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: KL,
-      verifyGoogle: async () => { throw new Error('bad token'); },
+      verifyGoogle: async () => { throw new Error('bad token'); }, requireTotp: false,
     });
     const server = await new Promise(resolve => { const s = app.listen(0, () => resolve(s)); });
     servers.push(server);

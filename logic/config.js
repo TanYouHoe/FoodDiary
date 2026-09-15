@@ -27,13 +27,25 @@ function originProtocol(value) {
   }
 }
 
+// requireTotp: REQUIRE_TOTP as set ('1' | '0'), or undefined. Unset, the
+// second factor is required in production only.
+export function shouldRequireTotp({ requireTotp, nodeEnv }) {
+  if (requireTotp === '1') return true;
+  if (requireTotp === '0') return false;
+  return nodeEnv === 'production';
+}
+
 // nodeEnv: NODE_ENV; jwtSecret: JWT_SECRET as set, or undefined;
+// requireTotp: REQUIRE_TOTP as set, or undefined; it must be '1' or '0';
 // defaultTimeZone: DEFAULT_TIME_ZONE as set, or undefined;
 // publicOrigin: PUBLIC_ORIGIN as set, or undefined. Account invite links are
 // built on it, so production needs it, over https; elsewhere http also works.
 // Returns a list of problems; an empty list means the server may start.
-export function checkServerConfig({ nodeEnv, jwtSecret, defaultTimeZone, publicOrigin }) {
+export function checkServerConfig({ nodeEnv, jwtSecret, defaultTimeZone, publicOrigin, requireTotp }) {
   const problems = [];
+  if (requireTotp !== undefined && requireTotp !== '1' && requireTotp !== '0') {
+    problems.push("REQUIRE_TOTP must be '1' or '0'.");
+  }
   if (nodeEnv === 'production') {
     if (!jwtSecret) problems.push('JWT_SECRET must be set in production.');
     else if (jwtSecret === DEV_JWT_SECRET) problems.push('JWT_SECRET must not be the development default in production.');

@@ -6,6 +6,8 @@ import { EventEmitter } from 'node:events';
 import { openDatabase } from '../server/db.js';
 import { makeTokens, makeAuthenticate } from '../server/auth.js';
 
+const NOW = new Date('2026-03-29T12:00:00Z');
+
 describe('makeAuthenticate time zone change', () => {
   let db;
   let userId;
@@ -14,11 +16,12 @@ describe('makeAuthenticate time zone change', () => {
 
   const run = (zone) => {
     const authenticate = makeAuthenticate({
-      db, tokens, defaultTimeZone: 'Asia/Kuala_Lumpur', now: () => new Date('2026-03-29T12:00:00Z'),
+      db, tokens, defaultTimeZone: 'Asia/Kuala_Lumpur', now: () => NOW, requireTotp: false,
       onTimeZoneChange: (id) => rebuilds.push(id),
     });
-    const headers = { authorization: `Bearer ${tokens.sign(userId)}`, 'x-time-zone': zone };
-    const req = { headers, get: (name) => headers[name.toLowerCase()] };
+    const token = tokens.signSession({ userId, tokenVersion: 0, scope: 'full' }, NOW);
+    const headers = { authorization: `Bearer ${token}`, 'x-time-zone': zone };
+    const req = { method: 'GET', originalUrl: '/api/profile', headers, get: (name) => headers[name.toLowerCase()] };
     const res = new EventEmitter();
     let nextCalled = false;
     authenticate(req, res, () => { nextCalled = true; });
@@ -28,7 +31,7 @@ describe('makeAuthenticate time zone change', () => {
 
   beforeEach(() => {
     db = openDatabase(':memory:', { defaultTimeZone: 'Asia/Kuala_Lumpur' });
-    userId = db.prepare("INSERT INTO users (name, email, password_hash) VALUES ('A', 'a@test.com', 'hash')").run().lastInsertRowid;
+    userId = Number(db.prepare("INSERT INTO users (name, email, password_hash) VALUES ('A', 'a@test.com', 'hash')").run().lastInsertRowid);
     rebuilds = [];
   });
 
@@ -56,5 +59,30 @@ describe('makeAuthenticate time zone change', () => {
     res.emit('finish');
     res.emit('close');
     assert.deepEqual(rebuilds, []);
+  });
+});
+
+describe('makeTokens', () => {
+  const tokens = makeTokens('test-secret');
+  const later = (seconds) => new Date(NOW.getTime() + seconds * 1000);
+
+  it('a session token expires after seven days of the injected clock', () => {
+    const token = tokens.signSession({ userId: 1, tokenVersion: 2, scope: 'full' }, NOW);
+    assert.equal(tokens.verifySession(token, later(7 * 24 * 3600 - 1)).tv, 2);
+    assert.equal(tokens.verifySession(token, later(7 * 24 * 3600)), null);
+  });
+
+  it('an mfa token expires after five minutes and is never a session', () => {
+    const token = tokens.signMfa({ userId: 1, tokenVersion: 0 }, NOW);
+    assert.equal(tokens.verifyMfa(token, later(299)).id, 1);
+    assert.equal(tokens.verifyMfa(token, later(300)), null);
+    assert.equal(tokens.verifySession(token, NOW), null);
+    assert.equal(tokens.verifyMfa(tokens.signSession({ userId: 1, tokenVersion: 0, scope: 'full' }, NOW), NOW), null);
+  });
+
+  it('another secret or garbage is refused', () => {
+    assert.equal(tokens.verifySession(makeTokens('other').signSession({ userId: 1, tokenVersion: 0, scope: 'full' }, NOW), NOW), null);
+    assert.equal(tokens.verifySession('garbage', NOW), null);
+    assert.equal(tokens.verifyMfa(undefined, NOW), null);
   });
 });

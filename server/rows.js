@@ -10,6 +10,9 @@ export function pick(row, fields) {
 
 export const USER_FIELDS = ['id', 'name', 'email', 'avatar_url', 'role', 'timezone', 'created_at'];
 
+// The owner's user list; totp_enabled is added from totp_enabled_at.
+export const USER_LIST_FIELDS = ['id', 'name', 'email', 'role', 'created_at'];
+
 export const RESTAURANT_FIELDS = [
   'id', 'name', 'cuisine_type', 'price_range', 'address', 'lat', 'lng', 'photo_url', 'added_by', 'created_at',
 ];
