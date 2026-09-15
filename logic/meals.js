@@ -9,6 +9,39 @@ export const MAX_MEAL_PHOTOS = 10;
 
 export const isAcceptedPhotoType = (mimeType) => PHOTO_TYPE.test(mimeType);
 
+// A stored photo is named by the server, never by the client: 32 random hex
+// characters and the extension of its accepted type.
+const PHOTO_EXTENSIONS = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
+const STORED_NAME_HEX = /^[0-9a-f]{32}$/;
+
+export const photoExtension = (mimeType) => (isAcceptedPhotoType(mimeType) ? PHOTO_EXTENSIONS[mimeType] : null);
+
+// hex: 32 random hex characters from the caller.
+export function storedPhotoName(hex, mimeType) {
+  const extension = photoExtension(mimeType);
+  if (typeof hex !== 'string' || !STORED_NAME_HEX.test(hex)) throw new Error('storedPhotoName: hex must be 32 lowercase hex characters');
+  if (!extension) throw new Error(`storedPhotoName: not an accepted photo type: ${mimeType}`);
+  return `${hex}${extension}`;
+}
+
+// A file's declared type is the client's word. Its first bytes decide.
+export const PHOTO_SIGNATURE_BYTES = 12;
+export const NOT_SUPPORTED_IMAGE = 'Not a supported image';
+
+const hasBytesAt = (bytes, expected, offset = 0) =>
+  bytes.length >= offset + expected.length && expected.every((value, i) => bytes[offset + i] === value);
+
+// bytes: the start of a file. Returns 'image/jpeg', 'image/png', 'image/webp' or null.
+export function photoTypeFromBytes(bytes) {
+  if (hasBytesAt(bytes, [0xFF, 0xD8, 0xFF])) return 'image/jpeg';
+  if (hasBytesAt(bytes, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) return 'image/png';
+  if (hasBytesAt(bytes, [0x52, 0x49, 0x46, 0x46]) && hasBytesAt(bytes, [0x57, 0x45, 0x42, 0x50], 8)) return 'image/webp'; // RIFF....WEBP
+  return null;
+}
+
+// An upload is kept only when its bytes are the accepted type it claimed.
+export const isGenuinePhoto = (mimeType, bytes) => isAcceptedPhotoType(mimeType) && photoTypeFromBytes(bytes) === mimeType;
+
 // The browser offers any image; the server accepts only PHOTO_TYPE.
 // A wider budget on the client, so it never refuses a file the server takes.
 export const isImageFile = (file) => file.type.startsWith('image/');

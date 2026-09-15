@@ -140,7 +140,7 @@ describe('API', () => {
   it('restaurant photo upload stores a url', async () => {
     const r = await upload(`/restaurants/${restaurantId}/photo`, 'photo', 1, token);
     assert.equal(r.status, 200);
-    assert.match(r.body.photo_url, /^\/uploads\/.+p0\.png$/);
+    assert.match(r.body.photo_url, /^\/uploads\/[0-9a-f]{32}\.png$/);
     assert.equal((await call('GET', `/restaurants/${restaurantId}`, { token })).body.photo_url, r.body.photo_url);
   });
 
