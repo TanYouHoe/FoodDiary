@@ -6,7 +6,7 @@ Self-contained: one SQLite file, one Express process. The server also serves the
 
 ## Features
 
-- **Auth** — email + password (bcrypt hashing, 7-day JWT) and Google Sign-In (verifies Google ID tokens via [`google-auth-library`](https://www.npmjs.com/package/google-auth-library)).
+- **Auth** — email + password (bcrypt hashing, 7-day JWT) and Google Sign-In (verifies Google ID tokens via [`google-auth-library`](https://www.npmjs.com/package/google-auth-library)). Sign-up is **invite only** — see [Account invites](#account-invites).
 - **Restaurants** — CRUD with cuisine / price-range / name-search filters and a single cover photo upload.
 - **Meals** — log a visit with rating (1–5), title, calories, notes, a visit date, structured dishes, and up to 10 photos.
 - **Dishes** — each meal's dishes are auto-categorized by keyword (Soup, Rice, Noodle, …); an aggregated `/api/dishes` view shows what you've eaten, how often, and where.
@@ -64,7 +64,7 @@ Then open <http://localhost:5176>.
 npm test           # node --test "tests/**/*.test.js"
 ```
 
-The tests need no running server. `tests/api.test.js` builds the app on an in-memory database. To run the same assertions against a server that is already running on a fresh database, set `FOOD_DIARY_TEST_BASE=http://127.0.0.1:<port>`.
+The tests need no running server. `tests/api.test.js` builds the app on an in-memory database. To run the same assertions against a server that is already running on a fresh database, set `FOOD_DIARY_TEST_BASE=http://127.0.0.1:<port>` and `FOOD_DIARY_TEST_OWNER_INVITE=<code>` (from `node tools/create-invite.js --owner` on that server).
 
 ### Ports
 
@@ -81,6 +81,7 @@ The tests need no running server. `tests/api.test.js` builds the app on an in-me
 | `JWT_SECRET`            | server  | `food-diary-dev-secret` | HMAC secret for signing JWTs. **Set a real value in production** — the fallback is insecure. |
 | `GOOGLE_CLIENT_ID`      | server  | _(unset)_               | Google OAuth client ID; the audience that Google ID tokens are verified against. Required for Google Sign-In. |
 | `DEFAULT_TIME_ZONE`     | server  | `Asia/Kuala_Lumpur`     | IANA time zone for users whose browser has not sent one yet. The server refuses to start with an unknown zone. |
+| `PUBLIC_ORIGIN`         | server, `tools/create-invite.js` | _(request origin)_ / `http://localhost:3004` | Origin of account invite links, e.g. `https://food.example.com`. |
 | `VITE_GOOGLE_CLIENT_ID` | client  | _(unset)_               | Same client ID, exposed to the front end (read in `src/pages/Login.jsx`). Set in `.env`. If unset, the Google button is hidden. |
 
 Server-side env vars (`PORT`, `JWT_SECRET`, `GOOGLE_CLIENT_ID`) come from the process environment. The client-side `VITE_GOOGLE_CLIENT_ID` is read from `.env` at build/dev time by Vite. A Google OAuth client and its `client_secret_*.json` are gitignored.
@@ -94,10 +95,30 @@ All routes are JSON. Every route except the auth endpoints and `/api/health` req
 | Method | Path                 | Description                                              |
 | ------ | -------------------- | ------------------------------------------------------- |
 | `GET`  | `/api/health`        | Liveness check — `{ status: "ok" }`.                    |
-| `POST` | `/api/auth/register` | Register `{ name, email, password }` → `{ token, user }`. |
+| `POST` | `/api/auth/register` | Register `{ name, email, password, invite_code }` → `{ token, user }`. 403 without a valid invite. |
 | `POST` | `/api/auth/login`    | Login `{ email, password }` → `{ token, user }`.        |
 | `GET`  | `/api/auth/me`       | Current user (auth required).                           |
-| `POST` | `/api/auth/google`   | Exchange a Google ID token `{ credential }` → `{ token, user }`. |
+| `POST` | `/api/auth/google`   | Exchange a Google ID token `{ credential, invite_code? }` → `{ token, user }`. A new email needs `invite_code`. |
+
+### Account invites
+
+Sign-up is by invite only. An account invite (not a group invite code) is a link `<origin>/invite/<code>`: it makes one account, gives that account its role (`owner` or `member`) and works for 7 days. Only a SHA-256 hash of the code is stored; the code is shown once.
+
+On a fresh server, make the first owner from the command line, then open the printed link:
+
+```sh
+node tools/create-invite.js --owner   # only while there is no owner; else prints an error and exits 1
+node tools/create-invite.js           # a member invite
+```
+
+The tool opens the same database as `server.js` and builds the link on `PUBLIC_ORIGIN` (default `http://localhost:3004`). After that, the owner creates member invites in **Settings → Invites**. A database that had users before invites existed keeps the old rule: when nobody is owner, the lowest user id becomes owner at start-up. A newer database never promotes anyone.
+
+| Method   | Path                         | Description                                                   |
+| -------- | ---------------------------- | ------------------------------------------------------------ |
+| `GET`    | `/api/invites/check/:code`   | Public. `{ valid }` and nothing else.                        |
+| `POST`   | `/api/invites`               | Owner. Create a member invite → `{ id, code, url, role, expires_at }`. |
+| `GET`    | `/api/invites`               | Owner. List invites with status and who used them; no codes. |
+| `DELETE` | `/api/invites/:id`           | Owner. Revoke (404 if missing, 409 if already used).         |
 
 ### Restaurants
 

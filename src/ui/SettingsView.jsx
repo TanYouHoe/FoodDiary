@@ -1,16 +1,11 @@
-// UI: the settings popup. A tab sidebar and four tabs: appearance, meal types,
-// dish types and eating patterns. Slots: `mealTypeDialog`, `dishTypeDialog`.
+// UI: the settings popup. A tab sidebar and the tabs: appearance, meal types,
+// dish types, eating patterns and, for the owner, account invites.
+// tabs: settingsTabs (./settings.js). Slots: `mealTypeDialog`, `dishTypeDialog`, `invitesTab`.
 
 import React from 'react';
 import { EditIcon, TrashIcon, LockIcon } from './icons.jsx';
 import { toPatternRows, PATTERN_PERIOD_LABELS } from './lists.js';
-
-export const SETTINGS_TABS = [
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'meal-types', label: 'Meal Types' },
-  { id: 'dish-types', label: 'Dish Types' },
-  { id: 'patterns', label: 'Eating Patterns' },
-];
+import { INVITES_TAB } from './settings.js';
 
 function EntryDetails({ entry }) {
   return (
@@ -162,8 +157,8 @@ export function DishTypeDialog({ isEdit, name, error, submitting, onName, onSubm
 }
 
 export default function SettingsView({
-  activeTab, loading, error, dark, mealTypes, dishTypes, changeableMealTypeIds, changeableDishTypeIds, profile,
-  confirmMealTypeId, confirmDishTypeId, mealTypeDialog, dishTypeDialog,
+  tabs, activeTab, loading, error, dark, mealTypes, dishTypes, changeableMealTypeIds, changeableDishTypeIds, profile,
+  confirmMealTypeId, confirmDishTypeId, mealTypeDialog, dishTypeDialog, invitesTab,
   onTab, onClose, onToggleDark,
   onAddMealType, onEditMealType, onAskDeleteMealType, onCancelDeleteMealType, onDeleteMealType,
   onAddDishType, onEditDishType, onAskDeleteDishType, onCancelDeleteDishType, onDeleteDishType,
@@ -175,7 +170,7 @@ export default function SettingsView({
         <div className="settings-sidebar">
           <h3 className="settings-sidebar-title">Settings</h3>
           <nav className="settings-nav">
-            {SETTINGS_TABS.map((tab) => (
+            {tabs.map((tab) => (
               <button
                 key={tab.id}
                 className={`settings-nav-item${activeTab === tab.id ? ' active' : ''}`}
@@ -189,7 +184,7 @@ export default function SettingsView({
 
         <div className="settings-content">
           <div className="settings-content-header">
-            <h3>{SETTINGS_TABS.find(t => t.id === activeTab)?.label}</h3>
+            <h3>{tabs.find(t => t.id === activeTab)?.label}</h3>
             <button className="modal-close" onClick={onClose}>&times;</button>
           </div>
 
@@ -251,6 +246,8 @@ export default function SettingsView({
               )}
 
               {activeTab === 'patterns' && <PatternsTab profile={profile} />}
+
+              {activeTab === INVITES_TAB.id && invitesTab}
             </div>
           )}
         </div>

@@ -24,8 +24,10 @@ export function AuthProvider({ children }) {
   };
 
   const login = async (email, password) => signIn(await api.login({ email, password }));
-  const register = async (name, email, password) => signIn(await api.register({ name, email, password }));
-  const googleLogin = async (credential) => signIn(await api.googleLogin(credential));
+  // inviteCode: the account invite a new account needs.
+  const register = async (name, email, password, inviteCode) =>
+    signIn(await api.register({ name, email, password, invite_code: inviteCode }));
+  const googleLogin = async (credential, inviteCode) => signIn(await api.googleLogin(credential, inviteCode));
 
   const logout = () => {
     clearToken();

@@ -56,8 +56,14 @@ export const api = {
   // Auth
   register: (data) => send('POST', `${API}/auth/register`, data),
   login: (data) => send('POST', `${API}/auth/login`, data),
-  googleLogin: (credential) => send('POST', `${API}/auth/google`, { credential }),
+  googleLogin: (credential, invite_code) => send('POST', `${API}/auth/google`, { credential, invite_code }),
   getMe: () => request(`${API}/auth/me`),
+
+  // Account invites (sign-up links; not group invite codes)
+  checkAccountInvite: (code) => request(`${API}/invites/check/${encodeURIComponent(code)}`),
+  getAccountInvites: () => request(`${API}/invites`),
+  createAccountInvite: () => send('POST', `${API}/invites`, {}),
+  revokeAccountInvite: (id) => request(`${API}/invites/${id}`, { method: 'DELETE' }),
 
   // Meal Types
   getMealTypes: (params) => request(`${API}/meal-types${query(params)}`),

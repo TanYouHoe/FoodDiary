@@ -7,6 +7,7 @@ import { useAuth } from './AuthContext';
 import { useTheme } from './hooks/useTheme.js';
 import AppShell from './ui/AppShell.jsx';
 import Login from './pages/Login';
+import Invite from './pages/Invite';
 import Dashboard from './pages/Dashboard';
 import Restaurants from './pages/Restaurants';
 import Meals from './pages/Meals';
@@ -44,7 +45,14 @@ function App() {
   }, [location.pathname]);
 
   if (loading) return <div className="loading">Loading...</div>;
-  if (!user) return <Login />;
+  if (!user) {
+    return (
+      <Routes>
+        <Route path="/invite/:code" element={<Invite />} />
+        <Route path="*" element={<Login />} />
+      </Routes>
+    );
+  }
 
   return (
     <AppShell
@@ -62,6 +70,7 @@ function App() {
     >
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/invite/:code" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/restaurants" element={<Restaurants />} />
         <Route path="/meals" element={<Meals />} />

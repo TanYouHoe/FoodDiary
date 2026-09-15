@@ -2358,6 +2358,12 @@ hr {
   letter-spacing: 0.5px;
 }
 
+/* An account invite link is long: let it wrap anywhere. */
+.account-invite-link {
+  word-break: break-all;
+  letter-spacing: 0;
+}
+
 .members-list {
   list-style: none;
   display: flex;
