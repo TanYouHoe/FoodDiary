@@ -64,7 +64,7 @@ Then open <http://localhost:5176>.
 npm test           # node --test "tests/**/*.test.js"
 ```
 
-The tests need no running server. `tests/api.test.js` builds the app on an in-memory database. To run the same assertions against a server that is already running on a fresh database, set `FOOD_DIARY_TEST_BASE=http://127.0.0.1:<port>` and `FOOD_DIARY_TEST_OWNER_INVITE=<code>` (from `node tools/create-invite.js --owner` on that server).
+The tests need no running server. `tests/api.test.js` builds the app on an in-memory database. To run the same assertions against a server that is already running on a fresh database, set `FOOD_DIARY_TEST_BASE=http://127.0.0.1:<port>` and `FOOD_DIARY_TEST_OWNER_INVITE=<code>` (from `node tools/create-invite.js --db <that server's database> --owner`).
 
 ### Ports
 
@@ -107,11 +107,11 @@ Sign-up is by invite only. An account invite (not a group invite code) is a link
 On a fresh server, make the first owner from the command line, then open the printed link:
 
 ```sh
-node tools/create-invite.js --owner   # only while there is no owner; else prints an error and exits 1
-node tools/create-invite.js           # a member invite
+node tools/create-invite.js --db <path-to>/fooddiary.db --owner   # only while there is no owner; else prints an error and exits 1
+FOOD_DIARY_DATA_DIR=<dir> node tools/create-invite.js             # a member invite in <dir>/fooddiary.db
 ```
 
-The tool opens the same database as `server.js` and builds the link on `PUBLIC_ORIGIN` (default `http://localhost:3004`). After that, the owner creates member invites in **Settings → Invites**. A database that had users before invites existed keeps the old rule: when nobody is owner, the lowest user id becomes owner at start-up. A newer database never promotes anyone.
+The tool refuses to run unless the database is named: `--db <path>`, or `FOOD_DIARY_DATA_DIR` (then `<dir>/fooddiary.db`; the M6 deploy sets it). It builds the link on `PUBLIC_ORIGIN` (default `http://localhost:3004`). After that, the owner creates member invites in **Settings → Invites**. A database that had users before invites existed keeps the old rule: when nobody is owner, the lowest user id becomes owner at start-up. A newer database never promotes anyone.
 
 | Method   | Path                         | Description                                                   |
 | -------- | ---------------------------- | ------------------------------------------------------------ |

@@ -10,7 +10,11 @@ export const INVITE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 // Random bytes in an account invite code.
 export const ACCOUNT_INVITE_CODE_BYTES = 24;
 
-export const INVITE_STATUSES = { valid: 'valid', expired: 'expired', used: 'used', revoked: 'revoked' };
+// Invites made through the API give the member role. The first owner comes
+// only from the command line (tools/create-invite.js --owner).
+export const API_INVITE_ROLE = USER_ROLES.member;
+
+export const INVITE_STATUSES ={ valid: 'valid', expired: 'expired', used: 'used', revoked: 'revoked' };
 
 export const INVITE_REQUIRED = 'A valid invite is required';
 export const OWNER_EXISTS = 'An owner already exists';
@@ -54,6 +58,13 @@ export function canUseInvite(invite, now, { ownerExists }) {
 
 // A used invite has made an account; revoking it would change nothing.
 // Returns the refusal text, or null.
+// Revoking a revoked invite again is accepted and changes nothing.
 export function inviteRevokeRefusal(invite) {
   return invite.used_at ? INVITE_ALREADY_USED : null;
+}
+
+// Whether to offer a revoke control: only when the revoke is accepted and
+// would change something, so never for a used or a revoked invite.
+export function canOfferRevoke(invite) {
+  return inviteRevokeRefusal(invite) === null && !invite.revoked_at;
 }

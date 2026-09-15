@@ -10,5 +10,8 @@ export const DATABASE_PATH = join(ROOT_DIR, 'fooddiary.db');
 export const UPLOADS_DIR = join(ROOT_DIR, 'uploads');
 export const DIST_DIR = join(ROOT_DIR, 'dist');
 
+// The database file inside a data directory (FOOD_DIARY_DATA_DIR).
+export const databasePathIn = (dataDir) => join(dataDir, 'fooddiary.db');
+
 // DEFAULT_TIME_ZONE as set, else the built-in default.
 export const defaultTimeZoneFromEnv = (env = process.env) => env.DEFAULT_TIME_ZONE ?? DEFAULT_TIME_ZONE;

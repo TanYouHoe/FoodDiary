@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { toInviteRows, invitePageState, INVITE_STATUS_LABELS, INVITE_HELP_TEXT } from '../../src/ui/invites.js';
 import { settingsTabs, SETTINGS_TABS, INVITES_TAB } from '../../src/ui/settings.js';
 import { formatShortDate } from '../../src/ui/format.js';
+import { canOfferRevoke } from '../../logic/invites.js';
 
 const base = {
   role: 'member', created_at: '2026-09-16T10:00:00.000Z', expires_at: '2026-09-23T10:00:00.000Z',
@@ -38,6 +39,16 @@ describe('toInviteRows', () => {
       { ...base, id: 6, status: 'revoked', revoked_at: '2026-09-18T00:00:00.000Z' },
     ]);
     assert.deepEqual(rows.map(r => [r.id, r.statusLabel, r.canRevoke]), [[5, 'Expired', true], [6, 'Revoked', false]]);
+  });
+
+  it('offers revoke exactly when the logic rule does', () => {
+    const invites = [
+      { ...base, id: 7, status: 'valid' },
+      { ...base, id: 8, status: 'expired' },
+      { ...base, id: 9, status: 'used', used_at: '2026-09-17T08:00:00.000Z', used_by: { id: 1, name: 'A', email: 'a@x.test' } },
+      { ...base, id: 10, status: 'revoked', revoked_at: '2026-09-18T00:00:00.000Z' },
+    ];
+    assert.deepEqual(toInviteRows(invites).map(r => r.canRevoke), invites.map(canOfferRevoke));
   });
 
   it('keeps the order it is given', () => {

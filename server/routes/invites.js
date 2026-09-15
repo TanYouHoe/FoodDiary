@@ -2,8 +2,7 @@
 // are for the owner. The rules are logic/invites.js; the store is server/invites.js.
 
 import { Router } from 'express';
-import { USER_ROLES } from '../../logic/access.js';
-import { canManageInvites, inviteRevokeRefusal } from '../../logic/invites.js';
+import { API_INVITE_ROLE, canManageInvites, inviteRevokeRefusal } from '../../logic/invites.js';
 import { createInvite, inviteUrl } from '../invites.js';
 import { notAllowed, notFound } from '../guards.js';
 
@@ -16,9 +15,9 @@ export function inviteRoutes({ db, invites, authenticate, now, publicOrigin }) {
 
   r.use(authenticate, (req, res, next) => (canManageInvites(req.user) ? next() : notAllowed(res)));
 
-  // Invites made here are member invites; the first owner comes from tools/create-invite.js.
+  // The role comes from logic (API_INVITE_ROLE); a request cannot choose it.
   r.post('/', (req, res) => {
-    const result = createInvite(db, { role: USER_ROLES.member, createdBy: req.user.id, now: now() });
+    const result = createInvite(db, { role: API_INVITE_ROLE, createdBy: req.user.id, now: now() });
     if (!result.ok) return res.status(409).json({ error: result.error });
     const origin = publicOrigin || `${req.protocol}://${req.get('host')}`;
     res.status(201).json({ ...result.invite, url: inviteUrl(origin, result.invite.code) });

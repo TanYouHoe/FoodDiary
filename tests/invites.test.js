@@ -2,8 +2,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   INVITE_LIFETIME_MS, inviteExpiresAt, inviteStatus, canManageInvites, inviteCreationRefusal,
-  canUseInvite, inviteRevokeRefusal, OWNER_EXISTS, INVALID_INVITE_ROLE, INVITE_ALREADY_USED,
+  canUseInvite, inviteRevokeRefusal, canOfferRevoke, API_INVITE_ROLE, OWNER_EXISTS, INVALID_INVITE_ROLE, INVITE_ALREADY_USED,
 } from '../logic/invites.js';
+
+describe('API_INVITE_ROLE', () => {
+  it('invites made through the API are member invites', () => assert.equal(API_INVITE_ROLE, 'member'));
+});
 
 const NOW = new Date('2026-09-16T10:00:00.000Z');
 const later = (ms) => new Date(NOW.getTime() + ms);
@@ -84,5 +88,26 @@ describe('inviteRevokeRefusal', () => {
   });
   it('refuses a used invite', () => {
     assert.equal(inviteRevokeRefusal(invite({ used_at: NOW.toISOString() })), INVITE_ALREADY_USED);
+  });
+});
+
+describe('canOfferRevoke', () => {
+  it('offers revoke for a valid or expired invite', () => {
+    assert.equal(canOfferRevoke(invite()), true);
+    assert.equal(canOfferRevoke(invite({ expires_at: NOW.toISOString() })), true);
+  });
+  it('does not offer revoke for a used invite, which the server refuses', () => {
+    assert.equal(canOfferRevoke(invite({ used_at: NOW.toISOString() })), false);
+  });
+  it('does not offer revoke for a revoked invite, though the server accepts it again', () => {
+    const revoked = invite({ revoked_at: NOW.toISOString() });
+    assert.equal(canOfferRevoke(revoked), false);
+    assert.equal(inviteRevokeRefusal(revoked), null);
+  });
+  it('agrees with the refusal: never offered when refused', () => {
+    for (const fields of [{}, { used_at: 'x' }, { revoked_at: 'x' }, { used_at: 'x', revoked_at: 'x' }]) {
+      const i = invite(fields);
+      if (canOfferRevoke(i)) assert.equal(inviteRevokeRefusal(i), null, JSON.stringify(fields));
+    }
   });
 });

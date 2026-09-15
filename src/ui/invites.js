@@ -2,7 +2,7 @@
 // invite page. The rules (status, revoke) are logic/invites.js. Account invites
 // are not group invite codes.
 
-import { INVITE_LIFETIME_MS, INVITE_STATUSES, inviteRevokeRefusal } from '../../logic/invites.js';
+import { INVITE_LIFETIME_MS, INVITE_STATUSES, canOfferRevoke } from '../../logic/invites.js';
 import { formatShortDate } from './format.js';
 
 export const INVITE_STATUS_LABELS = {
@@ -27,7 +27,7 @@ export function toInviteRows(invites) {
     expires: formatShortDate(invite.expires_at),
     usedBy: invite.used_by ? `${invite.used_by.name} (${invite.used_by.email})` : null,
     usedOn: invite.used_at ? formatShortDate(invite.used_at) : null,
-    canRevoke: invite.status !== INVITE_STATUSES.revoked && inviteRevokeRefusal(invite) === null,
+    canRevoke: canOfferRevoke(invite),
   }));
 }
 
