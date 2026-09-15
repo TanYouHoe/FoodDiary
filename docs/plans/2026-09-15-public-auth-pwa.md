@@ -53,7 +53,8 @@ Fixes findings 1, 6, 8, 9, 10, 11, 14.
 3. **Routes** answer 404 `{ error: 'Not found' }` for a missing record and 403
    `{ error: 'Not allowed' }` when the rule refuses, before any write. This covers
    `PUT/DELETE /restaurants/:id`, `POST /restaurants/:id/photo`, `PUT/DELETE /meals/:id`,
-   `POST /meals/:id/photos`, `DELETE /planned/:id`, and the catalogue edits.
+   `POST /meals/:id/photos`, `DELETE /planned/:id`, and the catalogue edits. The catalogue keeps
+   its existing 404 messages (`Meal type not found`, `Dish type not found`).
 4. **Finding 9:** `PUT /restaurants/:id` validates like create (400 `Name required`).
 5. **Finding 10:** a `null`, number or other non-string non-object entry in `dishes` is skipped.
 6. **Finding 11:** `logic/config.js` `checkServerConfig({ nodeEnv, jwtSecret })` returns a list of
