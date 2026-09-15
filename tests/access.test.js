@@ -83,17 +83,22 @@ describe('canUseGroup', () => {
 });
 
 describe('ownerToPromote', () => {
-  it('names nobody when there are no users', () => assert.equal(ownerToPromote([]), null));
+  const legacy = { hadUsersBeforeInvites: true };
+  it('names nobody when there are no users', () => assert.equal(ownerToPromote([], legacy), null));
   it('names nobody when an owner exists', () => {
-    assert.equal(ownerToPromote([{ id: 1, role: 'member' }, { id: 2, role: 'owner' }]), null);
+    assert.equal(ownerToPromote([{ id: 1, role: 'member' }, { id: 2, role: 'owner' }], legacy), null);
   });
   it('names the lowest id when there is no owner', () => {
-    assert.equal(ownerToPromote([{ id: 7, role: 'member' }, { id: 3, role: 'member' }, { id: 9, role: 'member' }]), 3);
+    assert.equal(ownerToPromote([{ id: 7, role: 'member' }, { id: 3, role: 'member' }, { id: 9, role: 'member' }], legacy), 3);
+  });
+  it('names nobody in a database that had no users before invites', () => {
+    assert.equal(ownerToPromote([{ id: 7, role: 'member' }, { id: 3, role: 'member' }], { hadUsersBeforeInvites: false }), null);
+    assert.equal(ownerToPromote([{ id: 7, role: 'member' }], {}), null);
   });
   it('does not change its argument', () => {
     const users = [{ id: 7, role: 'member' }, { id: 3, role: 'member' }];
     const copy = structuredClone(users);
-    ownerToPromote(users);
+    ownerToPromote(users, legacy);
     assert.deepEqual(users, copy);
   });
 });

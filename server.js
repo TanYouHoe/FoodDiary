@@ -6,15 +6,14 @@
 //   JWT_SECRET        token signing secret (insecure default for development)
 //   GOOGLE_CLIENT_ID  audience for Google sign-in tokens
 //   DEFAULT_TIME_ZONE IANA zone for users whose browser has not sent one (default Asia/Kuala_Lumpur)
+//   PUBLIC_ORIGIN     origin of account invite links (default: the request's own origin)
 
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { checkServerConfig, DEV_JWT_SECRET, DEFAULT_TIME_ZONE } from './logic/config.js';
+import { checkServerConfig, DEV_JWT_SECRET } from './logic/config.js';
 import { openDatabase } from './server/db.js';
 import { createApp } from './server/app.js';
+import { DATABASE_PATH, UPLOADS_DIR, DIST_DIR, defaultTimeZoneFromEnv } from './server/paths.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const log = (line) => console.log(line);
 
 const problems = checkServerConfig({
@@ -29,18 +28,18 @@ if (problems.length > 0) {
 
 const PORT = Number(process.env.PORT) || 3004;
 const JWT_SECRET = process.env.JWT_SECRET || DEV_JWT_SECRET;
-const UPLOADS_DIR = join(__dirname, 'uploads');
-const TIME_ZONE = process.env.DEFAULT_TIME_ZONE ?? DEFAULT_TIME_ZONE;
+const TIME_ZONE = defaultTimeZoneFromEnv();
 
 mkdirSync(UPLOADS_DIR, { recursive: true });
-const db = openDatabase(join(__dirname, 'fooddiary.db'), { defaultTimeZone: TIME_ZONE });
+const db = openDatabase(DATABASE_PATH, { defaultTimeZone: TIME_ZONE });
 const { app } = createApp({
   db,
   uploadsDir: UPLOADS_DIR,
-  distDir: join(__dirname, 'dist'),
+  distDir: DIST_DIR,
   jwtSecret: JWT_SECRET,
   googleClientId: process.env.GOOGLE_CLIENT_ID,
   defaultTimeZone: TIME_ZONE,
+  publicOrigin: process.env.PUBLIC_ORIGIN || null,
   log,
 });
 

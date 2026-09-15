@@ -9,10 +9,12 @@ import { mkdtempSync, rmSync, readdirSync, existsSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { callApi } from './helpers/http.js';
+import { inviteCode } from './helpers/invites.js';
 
 let base = process.env.FOOD_DIARY_TEST_BASE ? `${process.env.FOOD_DIARY_TEST_BASE}/api` : null;
 let server = null;
 let tmp = null;
+let sharedDb = null;
 
 // 1x1 transparent PNG
 const PNG = Buffer.from(
@@ -30,12 +32,23 @@ async function upload(path, field, count, token, at = base) {
   return { status: res.status, body: await res.json() };
 }
 
+// An account invite code for the shared server. In-process it comes straight
+// from the invite store. Against a running server the owner invite comes from
+// FOOD_DIARY_TEST_OWNER_INVITE (tools/create-invite.js --owner) and member
+// invites from POST /invites as that owner.
+async function invite(role, ownerToken) {
+  if (sharedDb) return inviteCode(sharedDb, { role });
+  if (role === 'owner') return process.env.FOOD_DIARY_TEST_OWNER_INVITE;
+  return (await call('POST', '/invites', { token: ownerToken })).body.code;
+}
+
 before(async () => {
   if (base) return;
   tmp = mkdtempSync(join(tmpdir(), 'fooddiary-test-'));
   const { openDatabase } = await import('../server/db.js');
   const { createApp } = await import('../server/app.js');
   const db = openDatabase(':memory:', { defaultTimeZone: 'Asia/Kuala_Lumpur' });
+  sharedDb = db;
   const { app } = createApp({ db, uploadsDir: tmp, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur' });
   await new Promise(resolve => { server = app.listen(0, resolve); });
   base = `http://127.0.0.1:${server.address().port}/api`;
@@ -60,7 +73,7 @@ describe('API', () => {
   });
 
   it('register creates a user and hides the password hash', async () => {
-    const r = await call('POST', '/auth/register', { body: { name: ' Alice ', email: 'alice@test.com', password: 'pw123' } });
+    const r = await call('POST', '/auth/register', { body: { name: ' Alice ', email: 'alice@test.com', password: 'pw123', invite_code: await invite('owner') } });
     assert.equal(r.status, 201);
     assert.ok(r.body.token);
     assert.equal(r.body.user.name, 'Alice');
@@ -71,7 +84,8 @@ describe('API', () => {
 
   it('register rejects missing fields and duplicate email', async () => {
     assert.equal((await call('POST', '/auth/register', { body: { email: 'x@test.com' } })).status, 400);
-    assert.equal((await call('POST', '/auth/register', { body: { name: 'A', email: 'alice@test.com', password: 'x' } })).status, 409);
+    const invite_code = await invite('member', token);
+    assert.equal((await call('POST', '/auth/register', { body: { name: 'A', email: 'alice@test.com', password: 'x', invite_code } })).status, 409);
   });
 
   it('login accepts valid credentials and rejects bad ones', async () => {
@@ -245,7 +259,7 @@ describe('API', () => {
   });
 
   it('groups: create, join, members, duplicate join', async () => {
-    const reg = await call('POST', '/auth/register', { body: { name: 'Bob', email: 'bob@test.com', password: 'pw' } });
+    const reg = await call('POST', '/auth/register', { body: { name: 'Bob', email: 'bob@test.com', password: 'pw', invite_code: await invite('member', token) } });
     token2 = reg.body.token;
     assert.equal((await call('POST', '/groups', { token, body: { name: ' ' } })).status, 400);
     const g = await call('POST', '/groups', { token, body: { name: 'Lunch Crew' } });
@@ -305,7 +319,7 @@ describe('API', () => {
 });
 
 // Ownership and access. Always runs on its own in-memory app, because it needs
-// the database handle to make the first user the owner and a fake Google verifier.
+// the database handle to make account invites and a fake Google verifier.
 // The tests share state (users, restaurant, meal, group) and run in order on
 // purpose: each one builds on what the one before it left behind.
 describe('API ownership and access', () => {
@@ -372,14 +386,15 @@ describe('API ownership and access', () => {
     }
     return pending;
   };
-  const register = async (name) => {
-    const r = await call('POST', '/auth/register', { at, body: { name, email: `${name}@own.test`, password: 'pw' } });
+  const register = async (name, role = 'member') => {
+    const invite_code = inviteCode(db, { role });
+    const r = await call('POST', '/auth/register', { at, body: { name, email: `${name}@own.test`, password: 'pw', invite_code } });
     return { ...r.body.user, token: r.body.token };
   };
 
   before(async () => {
     dir = mkdtempSync(join(tmpdir(), 'fooddiary-own-'));
-    const { openDatabase, promoteOwner } = await import('../server/db.js');
+    const { openDatabase } = await import('../server/db.js');
     const { createApp } = await import('../server/app.js');
     db = openDatabase(':memory:', { defaultTimeZone: 'Asia/Kuala_Lumpur' });
     const { app } = createApp({
@@ -387,10 +402,9 @@ describe('API ownership and access', () => {
     });
     await new Promise(resolve => { app2 = app.listen(0, resolve); });
     at = `http://127.0.0.1:${app2.address().port}/api`;
-    olive = await register('olive');
+    olive = await register('olive', 'owner');
     amy = await register('amy');
     ben = await register('ben');
-    promoteOwner(db);
   });
 
   after(async () => {
@@ -399,7 +413,7 @@ describe('API ownership and access', () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('users carry a role; the first user is the owner', async () => {
+  it('users carry a role; the owner invite made the owner', async () => {
     assert.equal((await req('GET', '/auth/me', olive)).body.role, 'owner');
     assert.equal((await req('GET', '/auth/me', amy)).body.role, 'member');
     const login = await call('POST', '/auth/login', { at, body: { email: 'ben@own.test', password: 'pw' } });

@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { callApi, eventually } from './helpers/http.js';
+import { inviteCode } from './helpers/invites.js';
 import { openDatabase } from '../server/db.js';
 import { createApp } from '../server/app.js';
 import { TIME_ZONE_CHANGE_INTERVAL_MS } from '../logic/meal-period.js';
@@ -38,7 +39,7 @@ describe('API time zones', () => {
     });
     await new Promise(resolve => { server = app.listen(0, resolve); });
     at = `http://127.0.0.1:${server.address().port}/api`;
-    const reg = await call('POST', '/auth/register', { body: { name: 'Zoe', email: 'zoe@tz.test', password: 'pw' } });
+    const reg = await call('POST', '/auth/register', { body: { name: 'Zoe', email: 'zoe@tz.test', password: 'pw', invite_code: inviteCode(db, { now: clock }) } });
     user = { ...reg.body.user, token: reg.body.token };
     place = (await call('POST', '/restaurants', { token: user.token, body: { name: 'Night Stall' } })).body;
   });
@@ -102,7 +103,7 @@ describe('API time zones', () => {
     // Now is Saturday 20:30 UTC = Sunday 04:30 (breakfast) in KL. Yuki's one
     // meal, Sunday 02:00 UTC = Sunday 10:00 KL, is in the KL slot of now
     // (Sunday breakfast) and not in the UTC slot (Saturday dinner).
-    const reg = await call('POST', '/auth/register', { body: { name: 'Yuki', email: 'yuki@tz.test', password: 'pw' } });
+    const reg = await call('POST', '/auth/register', { body: { name: 'Yuki', email: 'yuki@tz.test', password: 'pw', invite_code: inviteCode(db, { now: clock }) } });
     const yuki = reg.body.token;
     const cafe = (await call('POST', '/restaurants', { token: yuki, body: { name: 'Morning Cafe' } })).body;
     await call('POST', '/meals', { token: yuki, body: { restaurant_id: cafe.id, rating: 5, visited_at: '2026-03-22T02:00:00.000Z' } });

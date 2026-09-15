@@ -112,6 +112,18 @@ const SCHEMA = `
     key TEXT PRIMARY KEY,
     value TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS invites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_hash TEXT UNIQUE NOT NULL,
+    role TEXT NOT NULL CHECK(role IN (${ROLE_LIST})),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    used_at TEXT,
+    revoked_at TEXT
+  );
 `;
 
 function hasColumn(db, table, column) {
@@ -185,9 +197,20 @@ function seed(db) {
   }
 }
 
-// Makes a user the owner when nobody is (logic/access.js decides who). Idempotent.
+const LEGACY_OWNER_PROMOTION = 'legacy_owner_promotion';
+
+// Records, once, that the invites table arrived on a database that already
+// held users. Call with what was true before the schema ran.
+function recordLegacyOwnerPromotion(db, { hadInvitesTable, hadUsers }) {
+  if (hadInvitesTable || !hadUsers) return;
+  db.prepare('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)').run(LEGACY_OWNER_PROMOTION, '1');
+}
+
+// Makes a user the owner when nobody is, in a database from before invites
+// (logic/access.js decides who). Idempotent.
 export function promoteOwner(db) {
-  const id = ownerToPromote(db.prepare('SELECT id, role FROM users').all());
+  const hadUsersBeforeInvites = Boolean(db.prepare('SELECT 1 FROM meta WHERE key = ?').get(LEGACY_OWNER_PROMOTION));
+  const id = ownerToPromote(db.prepare('SELECT id, role FROM users').all(), { hadUsersBeforeInvites });
   if (id != null) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(USER_ROLES.owner, id);
 }
 
@@ -198,7 +221,12 @@ export function openDatabase(path, { defaultTimeZone } = {}) {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  const before = {
+    hadInvitesTable: hasTable(db, 'invites'),
+    hadUsers: hasTable(db, 'users') && db.prepare('SELECT COUNT(*) AS c FROM users').get().c > 0,
+  };
   db.exec(SCHEMA);
+  recordLegacyOwnerPromotion(db, before);
   migrate(db);
   convertZonelessVisitTimes(db, defaultTimeZone);
   seed(db);

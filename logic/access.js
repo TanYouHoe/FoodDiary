@@ -56,9 +56,13 @@ export function canUseGroup(groupId, membership) {
   return groupId === null || Boolean(membership);
 }
 
-// users: [{ id, role }]. The lowest id becomes owner when nobody is.
+// users: [{ id, role }]. hadUsersBeforeInvites: the database held users when
+// account invites arrived. Only such a database promotes: the lowest id becomes
+// owner when nobody is. A newer database gets its owner from an owner invite,
+// so no stranger who signed up first becomes owner.
 // Returns that id, or null when no change is needed.
-export function ownerToPromote(users) {
+export function ownerToPromote(users, { hadUsersBeforeInvites = false } = {}) {
+  if (!hadUsersBeforeInvites) return null;
   if (users.length === 0 || users.some(isOwner)) return null;
   return Math.min(...users.map(u => u.id));
 }

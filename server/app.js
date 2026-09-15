@@ -10,7 +10,9 @@ import { makeUpload, isUploadError } from './uploads.js';
 import { makeGroupAccess } from './guards.js';
 import { rebuildProfile } from './profile-store.js';
 import { resolveTimeZone, isValidTimeZone } from '../logic/meal-period.js';
+import { makeInvites } from './invites.js';
 import { authRoutes } from './routes/auth.js';
+import { inviteRoutes } from './routes/invites.js';
 import { restaurantRoutes } from './routes/restaurants.js';
 import { mealTypeRoutes, dishTypeRoutes } from './routes/catalog.js';
 import { mealRoutes, dishRoutes } from './routes/meals.js';
@@ -29,11 +31,13 @@ export function createApp({
   rng = Math.random,
   log = () => {},
   defaultTimeZone,
+  publicOrigin = null,
 }) {
   if (!isValidTimeZone(defaultTimeZone)) throw new Error(`createApp: defaultTimeZone must be an IANA time zone, got ${defaultTimeZone}`);
   const tokens = makeTokens(jwtSecret);
   const upload = makeUpload(uploadsDir);
   const groupAllowed = makeGroupAccess(db);
+  const invites = makeInvites(db);
 
   // The profile is derived data. A failed rebuild must not fail the meal change.
   // It is read in the user's stored zone, else the default zone.
@@ -55,7 +59,8 @@ export function createApp({
 
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-  app.use('/api/auth', authRoutes({ db, tokens, authenticate, verifyGoogle, googleClientId }));
+  app.use('/api/auth', authRoutes({ db, tokens, authenticate, verifyGoogle, googleClientId, invites, now }));
+  app.use('/api/invites', inviteRoutes({ db, invites, authenticate, now, publicOrigin }));
   app.use('/api/restaurants', authenticate, restaurantRoutes({ db, upload, uploadsDir, refreshProfile }));
   app.use('/api/meal-types', authenticate, mealTypeRoutes({ db }));
   app.use('/api/dish-types', authenticate, dishTypeRoutes({ db }));

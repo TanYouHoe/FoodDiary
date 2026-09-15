@@ -6,8 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { openDatabase } from '../server/db.js';
+import { createInvite, makeInvites } from '../server/invites.js';
 
+const NOW = new Date('2026-09-16T10:00:00.000Z');
 const columns = (db, table) => db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all().map(c => c.name);
+const addUser = (db, email, role) => db.prepare("INSERT INTO users (name, email, password_hash, role) VALUES ('U', ?, 'h', ?)")
+  .run(email, role).lastInsertRowid;
 
 describe('openDatabase', () => {
   let dir;
@@ -35,12 +39,18 @@ describe('openDatabase', () => {
     db.close();
   });
 
-  it('promotes the lowest id only when no owner exists, on every open', () => {
+  it('in a database from before invites, promotes the lowest id only when no owner exists, on every open', () => {
+    const old = new Database(file);
+    old.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL, avatar_url TEXT, created_at TEXT DEFAULT (datetime('now')));
+      INSERT INTO users (name, email, password_hash) VALUES ('U', 'one@test.com', 'h'), ('U', 'two@test.com', 'h');
+    `);
+    old.close();
+
     let db = openDatabase(file, { defaultTimeZone: 'UTC' });
-    const add = (email) => db.prepare("INSERT INTO users (name, email, password_hash) VALUES ('U', ?, 'h')").run(email).lastInsertRowid;
-    add('one@test.com');
-    add('two@test.com');
-    assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'owner'").get().c, 0);
+    assert.deepEqual(db.prepare('SELECT value FROM meta WHERE key = ?').get('legacy_owner_promotion'), { value: '1' });
+    db.prepare("UPDATE users SET role = 'member'").run();
     db.close();
 
     db = openDatabase(file, { defaultTimeZone: 'UTC' });
@@ -51,6 +61,32 @@ describe('openDatabase', () => {
 
     db = openDatabase(file, { defaultTimeZone: 'UTC' });
     assert.deepEqual(db.prepare('SELECT id, role FROM users ORDER BY id').all(), [{ id: 1, role: 'member' }, { id: 2, role: 'owner' }]);
+    db.close();
+  });
+
+  it('a fresh database: a member who signs up through an invite never becomes owner', () => {
+    let db = openDatabase(file, { defaultTimeZone: 'UTC' });
+    assert.equal(db.prepare('SELECT 1 FROM meta WHERE key = ?').get('legacy_owner_promotion'), undefined);
+    const { code } = createInvite(db, { role: 'member', now: NOW }).invite;
+    const userId = makeInvites(db).redeem(code, NOW, (role) => addUser(db, 'member@test.com', role));
+    assert.ok(userId);
+    db.close();
+
+    db = openDatabase(file, { defaultTimeZone: 'UTC' });
+    assert.deepEqual(db.prepare('SELECT id, role FROM users').all(), [{ id: userId, role: 'member' }]);
+    assert.equal(db.prepare('SELECT 1 FROM meta WHERE key = ?').get('legacy_owner_promotion'), undefined);
+    db.close();
+  });
+
+  it('a fresh database: the user of an owner invite is owner, and stays owner', () => {
+    let db = openDatabase(file, { defaultTimeZone: 'UTC' });
+    const { code } = createInvite(db, { role: 'owner', now: NOW }).invite;
+    const ownerId = makeInvites(db).redeem(code, NOW, (role) => addUser(db, 'owner@test.com', role));
+    assert.deepEqual(createInvite(db, { role: 'owner', now: NOW }), { ok: false, error: 'An owner already exists' });
+    db.close();
+
+    db = openDatabase(file, { defaultTimeZone: 'UTC' });
+    assert.deepEqual(db.prepare('SELECT id, role FROM users').all(), [{ id: ownerId, role: 'owner' }]);
     db.close();
   });
 
