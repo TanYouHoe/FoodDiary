@@ -14,23 +14,16 @@
 import { pathToFileURL } from 'node:url';
 import { openDatabase } from '../server/db.js';
 import { createInvite, inviteUrl } from '../server/invites.js';
-import { databasePathIn, defaultTimeZoneFromEnv } from '../server/paths.js';
+import { databasePathFromArgs, defaultTimeZoneFromEnv } from '../server/paths.js';
 import { USER_ROLES } from '../logic/access.js';
 import { DEV_ORIGIN } from '../logic/config.js';
 
 const USAGE = 'Usage: node tools/create-invite.js --db <path> [--owner]  (or set FOOD_DIARY_DATA_DIR)';
 
-// The database path from --db <path>, else FOOD_DIARY_DATA_DIR, else null.
-function databasePath(args, env) {
-  const at = args.indexOf('--db');
-  if (at !== -1) return args[at + 1] && !args[at + 1].startsWith('--') ? args[at + 1] : null;
-  return env.FOOD_DIARY_DATA_DIR ? databasePathIn(env.FOOD_DIARY_DATA_DIR) : null;
-}
-
 // args: the command line arguments; env: the environment; now: a Date;
 // openDb: (path) => database; print: (line) => void. Returns { exitCode }.
 export function runCreateInvite({ args, env, now, openDb, print }) {
-  const path = databasePath(args, env);
+  const path = databasePathFromArgs(args, env);
   if (!path) {
     print(USAGE);
     return { exitCode: 1 };

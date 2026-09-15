@@ -3,6 +3,7 @@
 // and codes come from tests/helpers/totp.js. The tests share users and run in order.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -130,6 +131,8 @@ describe('API two-factor', () => {
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM backup_codes WHERE user_id = ?').get(olive.id).c, 10);
     const stored = JSON.stringify(db.prepare('SELECT * FROM backup_codes').all());
     assert.ok(!enabled.body.backup_codes.some(c => stored.includes(c)), 'codes are stored hashed');
+    const plainHashes = enabled.body.backup_codes.map(c => createHash('sha256').update(c).digest('hex'));
+    assert.ok(!plainHashes.some(h => stored.includes(h)), 'not as plain SHA-256');
 
     assert.equal((await call('GET', '/restaurants', { token: enabled.body.token })).status, 200);
     assert.deepEqual(await call('GET', '/auth/me', { token: olive.token }), EXPIRED, 'the enroll token is revoked');
@@ -245,6 +248,25 @@ describe('API two-factor', () => {
     assert.deepEqual(await mfa(first.body.mfa_token, { backup_code: olive.backupCodes[2] }), INVALID_CODE);
     assert.equal((await mfa(first.body.mfa_token, { backup_code: r.body.backup_codes[0] })).status, 200);
     olive.backupCodes = r.body.backup_codes;
+  });
+
+  it('a backup code authorises a replace and new backup codes, once each', async () => {
+    const used = olive.backupCodes[1];
+    const setup = await call('POST', '/auth/totp/setup', { token: olive.token, body: { backup_code: used } });
+    assert.equal(setup.status, 200);
+    assert.deepEqual(await call('POST', '/auth/totp/setup', { token: olive.token, body: { backup_code: used } }), INVALID_CODE,
+      'the backup code is spent');
+    tick();
+    const enabled = await call('POST', '/auth/totp/enable', { token: olive.token, body: { code: code(setup.body.secret) } });
+    assert.equal(enabled.status, 200);
+    olive = { ...olive, secret: setup.body.secret, token: enabled.body.token, backupCodes: enabled.body.backup_codes };
+
+    const regenerated = await call('POST', '/auth/totp/backup-codes', { token: olive.token, body: { backup_code: olive.backupCodes[0] } });
+    assert.equal(regenerated.status, 200);
+    assert.equal(regenerated.body.backup_codes.length, 10);
+    assert.deepEqual(await call('POST', '/auth/totp/backup-codes', { token: olive.token, body: { backup_code: olive.backupCodes[0] } }),
+      INVALID_CODE, 'the old set is gone and the code was spent');
+    olive.backupCodes = regenerated.body.backup_codes;
   });
 
   it('disable is refused while the factor is required', async () => {

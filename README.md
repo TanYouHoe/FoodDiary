@@ -114,9 +114,16 @@ All routes are JSON. Every route except the auth endpoints and `/api/health` req
 Every account can bind an authenticator app (Google Authenticator, Aegis, 1Password). With `REQUIRE_TOTP` on (the production default), a user without one gets a session that reaches only `/me`, setup, enable and logout-all; every other route answers 403 `{ code: 'MFA_ENROLL_REQUIRED' }`, and the app shows the setup screen (QR code, setup key, 10 backup codes shown once).
 
 - **Codes** are single use: a code whose 30-second step is not newer than the last accepted step is refused. One step of drift either side is accepted.
-- **Backup codes** (`xxxx-xxxx`) work once each and are stored as SHA-256 hashes. A new set replaces the old one.
+- **Backup codes** (`xxxx-xxxx`) work once each. They are stored as HMAC-SHA256 under a key derived from `JWT_SECRET`, so changing `JWT_SECRET` makes existing backup codes stop working. A new set replaces the old one. A backup code can stand in for a current code at sign-in, to replace the authenticator, and to make new backup codes.
 - **Sessions** carry a token version. Sign out everywhere, and enabling, replacing, disabling or resetting the factor, raise it, so older tokens answer 401 `Session expired`.
-- **Lost phone:** the owner resets the user's factor in **Settings → Security**; the user then sets up a new one at the next sign-in. The owner cannot reset their own factor; they replace it in **Settings → Security** with a current code.
+- **Lost phone:** the owner resets the user's factor in **Settings → Security**; the user then sets up a new one at the next sign-in. The owner cannot reset their own factor there; they replace it in **Settings → Security** with a current code or a backup code. An owner who has lost the phone **and** the backup codes resets from the server's console:
+
+  ```sh
+  node tools/reset-two-factor.js --db <path-to>/fooddiary.db --email owner@example.com
+  FOOD_DIARY_DATA_DIR=<dir> node tools/reset-two-factor.js --email owner@example.com
+  ```
+
+  It removes the authenticator and backup codes of that user and ends every session; exit 1 if no user has that email. Like `tools/create-invite.js`, it refuses to run unless the database is named.
 - **Lockout:** 8 failures on one account (password by email, codes by user) or 20 from one IP within 15 minutes lock that key for 15 minutes (429). Registration and the invite check count by IP only. A success clears the account count.
 
 ### Account invites

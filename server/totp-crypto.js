@@ -37,5 +37,15 @@ export function generateBackupCodes(count = BACKUP_CODE_COUNT) {
   return [...codes];
 }
 
+const PEPPER_LABEL = 'food-diary backup codes';
+
+// The key backup code hashes are made with, derived from the JWT secret, so a
+// copied database alone cannot be searched for the 40-bit codes.
+export function backupCodePepper(jwtSecret) {
+  if (!jwtSecret) throw new Error('backupCodePepper: a JWT secret is required');
+  return crypto.createHmac('sha256', jwtSecret).update(PEPPER_LABEL).digest();
+}
+
 // code: the normalised form (logic/backup-codes.js normaliseBackupCode).
-export const hashBackupCode = (code) => crypto.createHash('sha256').update(code).digest('hex');
+// pepper: from backupCodePepper. Returns HMAC-SHA256 as hex.
+export const hashBackupCode = (code, pepper) => crypto.createHmac('sha256', pepper).update(code).digest('hex');

@@ -12,7 +12,7 @@ import {
 } from '../../logic/accounts.js';
 import { INVITE_REQUIRED } from '../../logic/invites.js';
 import { loginKeys, codeKeys, publicKeys } from '../../logic/lockout.js';
-import { isCurrentTokenVersion, CODE_REQUIRED, INVALID_CODE, INVALID_MFA_TOKEN } from '../../logic/two-factor.js';
+import { isCurrentTokenVersion, factorProof, CODE_REQUIRED, INVALID_CODE, INVALID_MFA_TOKEN } from '../../logic/two-factor.js';
 import { tooManyAttempts } from '../lockout-store.js';
 
 const BCRYPT_ROUNDS = 10;
@@ -76,16 +76,16 @@ export function authRoutes({ db, authenticate, verifyGoogle, googleClientId, inv
 
   // Body { mfa_token, code } or { mfa_token, backup_code }.
   r.post('/mfa', async (req, res) => {
-    const { mfa_token: mfaToken, code, backup_code: backupCode } = req.body ?? {};
-    if (!code && !backupCode) return res.status(400).json({ error: CODE_REQUIRED });
+    const mfaToken = req.body?.mfa_token;
+    const proof = factorProof(req.body);
+    if (!proof) return res.status(400).json({ error: CODE_REQUIRED });
     const at = now();
     const claims = tokens.verifyMfa(mfaToken, at);
     const state = claims && twoFactor.state(claims.id);
     if (!state || !state.totpEnabled || !isCurrentTokenVersion(claims, state.tokenVersion)) {
       return res.status(401).json({ error: INVALID_MFA_TOKEN });
     }
-    const outcome = await lockout.attempt(codeKeys(claims.id, req.ip), at, () =>
-      (code ? twoFactor.useTotp(claims.id, code, at) : twoFactor.useBackupCode(claims.id, backupCode, at)));
+    const outcome = await lockout.attempt(codeKeys(claims.id, req.ip), at, () => twoFactor.useProof(claims.id, proof, at));
     if (outcome === 'locked') return tooManyAttempts(res);
     if (outcome === 'failed') return res.status(401).json({ error: INVALID_CODE });
     res.json(sessions.full(claims.id));

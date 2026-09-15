@@ -7,7 +7,8 @@ import {
   isReplay, otpauthUri, groupSecret, TOTP_PERIOD_SECONDS, TOTP_DIGITS,
 } from '../logic/totp.js';
 import { normaliseBackupCode, formatBackupCode, BACKUP_CODE_ALPHABET, BACKUP_CODE_COUNT, BACKUP_CODE_LENGTH } from '../logic/backup-codes.js';
-import { hotp, codesForSteps, generateSecret, generateBackupCodes, hashBackupCode } from '../server/totp-crypto.js';
+import { createHash } from 'node:crypto';
+import { hotp, codesForSteps, generateSecret, generateBackupCodes, hashBackupCode, backupCodePepper } from '../server/totp-crypto.js';
 
 const RFC_SECRET = base32Encode(new TextEncoder().encode('12345678901234567890'));
 
@@ -160,9 +161,13 @@ describe('backup codes', () => {
     assert.equal(normaliseBackupCode('!!!!-!!!!'), null);
   });
 
-  it('hashes with SHA-256, the same code to the same hash', () => {
-    assert.match(hashBackupCode('abcd-efgh'), /^[0-9a-f]{64}$/);
-    assert.equal(hashBackupCode('abcd-efgh'), hashBackupCode('abcd-efgh'));
-    assert.notEqual(hashBackupCode('abcd-efgh'), hashBackupCode('abcd-efgj'));
+  it('hashes with HMAC-SHA256 under a pepper from the JWT secret, never plain SHA-256', () => {
+    const pepper = backupCodePepper('jwt-secret-a');
+    assert.match(hashBackupCode('abcd-efgh', pepper), /^[0-9a-f]{64}$/);
+    assert.equal(hashBackupCode('abcd-efgh', pepper), hashBackupCode('abcd-efgh', backupCodePepper('jwt-secret-a')));
+    assert.notEqual(hashBackupCode('abcd-efgh', pepper), hashBackupCode('abcd-efgj', pepper));
+    assert.notEqual(hashBackupCode('abcd-efgh', pepper), createHash('sha256').update('abcd-efgh').digest('hex'));
+    assert.notEqual(hashBackupCode('abcd-efgh', pepper), hashBackupCode('abcd-efgh', backupCodePepper('jwt-secret-b')));
+    assert.throws(() => backupCodePepper(''), /secret/);
   });
 });

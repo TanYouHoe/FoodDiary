@@ -60,3 +60,13 @@ export const canDisableTotp = ({ requireTotp }) => !requireTotp;
 
 // Replacing an enabled factor needs a current code from it.
 export const setupNeedsCurrentCode = ({ totpEnabled }) => totpEnabled;
+
+// What proves the second factor for the code step, a replace or new backup
+// codes: a current code, or else a backup code (so a user who lost the phone
+// can still replace it). body: { code, backup_code }.
+// Returns { kind: 'code' | 'backup', value }, or null when neither is given.
+export function factorProof(body) {
+  if (body?.code) return { kind: 'code', value: body.code };
+  if (body?.backup_code) return { kind: 'backup', value: body.backup_code };
+  return null;
+}

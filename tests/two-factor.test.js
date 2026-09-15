@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   signInStep, effectiveScope, scopeAllows, isTokenOfType, isCurrentTokenVersion, canDisableTotp,
-  setupNeedsCurrentCode, TOKEN_SCOPES, TOKEN_TYPES, ENROLL_SCOPE_ROUTES, MFA_TOKEN_TTL_SECONDS,
+  setupNeedsCurrentCode, factorProof, TOKEN_SCOPES, TOKEN_TYPES, ENROLL_SCOPE_ROUTES, MFA_TOKEN_TTL_SECONDS,
 } from '../logic/two-factor.js';
 import { canListUsers, totpResetRefusal, NOT_ALLOWED, OWN_FACTOR_RESET } from '../logic/access.js';
 import { shouldRequireTotp, checkServerConfig } from '../logic/config.js';
@@ -56,6 +56,19 @@ describe('token scope', () => {
   it('the version must equal the user version', () => {
     assert.equal(isCurrentTokenVersion({ tv: 3 }, 3), true);
     assert.equal(isCurrentTokenVersion({ tv: 2 }, 3), false);
+  });
+});
+
+describe('factorProof', () => {
+  it('a current code or a backup code authorises; the code is used when both are sent', () => {
+    assert.deepEqual(factorProof({ code: '123456' }), { kind: 'code', value: '123456' });
+    assert.deepEqual(factorProof({ backup_code: 'abcd-efgh' }), { kind: 'backup', value: 'abcd-efgh' });
+    assert.deepEqual(factorProof({ code: '123456', backup_code: 'abcd-efgh' }), { kind: 'code', value: '123456' });
+  });
+  it('nothing, or empty values, is no proof', () => {
+    assert.equal(factorProof({}), null);
+    assert.equal(factorProof({ code: '', backup_code: '' }), null);
+    assert.equal(factorProof(undefined), null);
   });
 });
 

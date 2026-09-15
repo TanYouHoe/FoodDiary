@@ -13,6 +13,7 @@ import { resolveTimeZone, isValidTimeZone } from '../logic/meal-period.js';
 import { makeInvites } from './invites.js';
 import { makeLockout } from './lockout-store.js';
 import { makeTwoFactor } from './two-factor.js';
+import { backupCodePepper } from './totp-crypto.js';
 import { makeSessions } from './sessions.js';
 import { authRoutes } from './routes/auth.js';
 import { totpRoutes } from './routes/totp.js';
@@ -46,7 +47,7 @@ export function createApp({
   const groupAllowed = makeGroupAccess(db);
   const invites = makeInvites(db);
   const lockout = makeLockout(db);
-  const twoFactor = makeTwoFactor(db);
+  const twoFactor = makeTwoFactor(db, { backupCodePepper: backupCodePepper(jwtSecret) });
   const sessions = makeSessions({ db, tokens, requireTotp, now });
 
   // The profile is derived data. A failed rebuild must not fail the meal change.
