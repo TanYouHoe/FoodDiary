@@ -100,6 +100,12 @@ describe('cacheControlFor', () => {
     assert.equal(IMMUTABLE, 'public, max-age=31536000, immutable');
   });
 
+  it('the service worker runtime at the root has a content hash too', () => {
+    assert.equal(cacheControlFor('workbox-5a8d0a5e.js'), IMMUTABLE);
+    assert.equal(cacheControlFor('workbox-window.prod.es5.js'), null);
+    assert.equal(cacheControlFor('sub/workbox-5a8d0a5e.js'), null);
+  });
+
   it('other files keep the default', () => {
     assert.equal(cacheControlFor('favicon.ico'), null);
     assert.equal(cacheControlFor('icons/icon-192.png'), null);

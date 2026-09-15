@@ -74,10 +74,14 @@ export const IMMUTABLE = 'public, max-age=31536000, immutable';
 // The app shell: a browser must check these for a new version on every load.
 const SHELL_FILES = new Set(['index.html', 'sw.js', 'manifest.webmanifest']);
 
+// The Workbox runtime sw.js imports, at the root, named by its content hash.
+const WORKBOX_RUNTIME = /^workbox-[0-9a-f]+\.js$/;
+
 // relativePath: a built file's path inside dist, with '/' separators.
 // Returns the Cache-Control value, or null for the default.
 export function cacheControlFor(relativePath) {
   if (SHELL_FILES.has(relativePath.split('/').pop())) return NO_CACHE;
   if (relativePath.startsWith('assets/')) return IMMUTABLE; // Vite puts a content hash in these names
+  if (WORKBOX_RUNTIME.test(relativePath)) return IMMUTABLE;
   return null;
 }

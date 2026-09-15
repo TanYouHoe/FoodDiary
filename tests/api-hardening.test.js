@@ -61,7 +61,9 @@ describe('API hardening', () => {
     mkdirSync(join(distDir, 'assets'), { recursive: true });
     writeFileSync(join(distDir, 'index.html'), '<!doctype html><div id="root"></div><script type="module" src="/assets/x.js"></script>');
     writeFileSync(join(distDir, 'assets', 'x.js'), 'export {};');
-    writeFileSync(join(distDir, 'sw.js'), 'self;');
+    writeFileSync(join(distDir, 'sw.js'), 'importScripts("/workbox-5a8d0a5e.js");');
+    writeFileSync(join(distDir, 'workbox-5a8d0a5e.js'), 'self;');
+    writeFileSync(join(distDir, 'manifest.webmanifest'), '{"name":"Food Diary: First Bite"}');
 
     const db = openDatabase(':memory:', { defaultTimeZone: KL });
     const built = createApp({
@@ -187,6 +189,34 @@ describe('API hardening', () => {
     it('hashed assets are immutable for a year', async () => {
       const res = await get('/assets/x.js');
       assert.equal(res.status, 200);
+      assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+    });
+  });
+
+  describe('PWA files', () => {
+    it('the manifest is application/manifest+json and revalidated', async () => {
+      const res = await get('/manifest.webmanifest');
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type') ?? '', /^application\/manifest\+json/);
+      assert.equal(res.headers.get('cache-control'), 'no-cache');
+      assert.deepEqual(await res.json(), { name: 'Food Diary: First Bite' });
+    });
+
+    it('the service worker is JavaScript, revalidated, under a policy that lets this origin run it', async () => {
+      const res = await get('/sw.js');
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type') ?? '', /^(text|application)\/javascript/);
+      assert.equal(res.headers.get('cache-control'), 'no-cache');
+      const csp = res.headers.get('content-security-policy') ?? '';
+      assert.match(csp, /(^|; )script-src 'self'[ ;]/);
+      assert.doesNotMatch(csp, /worker-src/, 'worker-src falls back to script-src');
+      assert.doesNotMatch(csp, /unsafe-inline'[^;]*script|script-src[^;]*unsafe/);
+    });
+
+    it('the hashed workbox runtime the worker imports is immutable', async () => {
+      const res = await get('/workbox-5a8d0a5e.js');
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type') ?? '', /javascript/);
       assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
     });
   });
