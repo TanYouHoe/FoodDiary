@@ -13,7 +13,8 @@ export const isAcceptedPhotoType = (mimeType) => PHOTO_TYPE.test(mimeType);
 export const isImageFile = (file) => file.type.startsWith('image/');
 
 // A visit time is an instant: it must parse and name its zone ('Z' or ±HH:MM),
-// or its meal period would depend on the machine that reads it.
+// or its meal period would depend on the machine that reads it. The value is
+// returned as a UTC ISO string, so stored visit times sort as text in time order.
 const ENDS_WITH_ZONE = /(Z|[+-]\d{2}:\d{2})$/i;
 
 export function checkVisitTime(visitedAt) {
@@ -21,7 +22,7 @@ export function checkVisitTime(visitedAt) {
     return { ok: false, error: 'Invalid visit time' };
   }
   if (!ENDS_WITH_ZONE.test(visitedAt)) return { ok: false, error: 'Visit time must include a time zone' };
-  return { ok: true, value: visitedAt };
+  return { ok: true, value: new Date(visitedAt).toISOString() };
 }
 
 export function checkNewMeal(body) {
@@ -42,7 +43,7 @@ export function checkNewMeal(body) {
       calories: calories || null,
       rating,
       notes: notes || null,
-      visited_at,
+      visited_at: visit.value,
       dishes: Array.isArray(dishes) ? dishes : [],
     },
   };

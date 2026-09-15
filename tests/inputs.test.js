@@ -35,10 +35,13 @@ describe('group ids in meal and planned input', () => {
   it('a visit time must be a readable timestamp with a time zone', () => {
     const NO_ZONE = { ok: false, error: 'Visit time must include a time zone' };
     const INVALID = { ok: false, error: 'Invalid visit time' };
+    // Every accepted form is stored as one UTC ISO string, so the text order is the time order.
+    const UTC = '2026-09-01T12:00:00.000Z';
     for (const visited_at of ['2026-09-01T12:00:00.000Z', '2026-09-01T12:00:00Z', '2026-09-01T20:00:00+08:00', '2026-09-01T07:00:00-05:00']) {
-      assert.equal(checkNewMeal({ ...meal, visited_at }).value.visited_at, visited_at);
-      assert.equal(toMealPatch({ visited_at }).value.fields.visited_at, visited_at);
+      assert.equal(checkNewMeal({ ...meal, visited_at }).value.visited_at, UTC, visited_at);
+      assert.equal(toMealPatch({ visited_at }).value.fields.visited_at, UTC, visited_at);
     }
+    assert.equal(checkNewMeal({ ...meal, visited_at: '2026-03-29T12:30:00+08:00' }).value.visited_at, '2026-03-29T04:30:00.000Z');
     for (const visited_at of ['2026-09-01T12:00:00', '2026-09-01', '2026-09-01 12:00']) {
       assert.deepEqual(checkNewMeal({ ...meal, visited_at }), NO_ZONE, visited_at);
       assert.deepEqual(toMealPatch({ visited_at }), NO_ZONE, visited_at);

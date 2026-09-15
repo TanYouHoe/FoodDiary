@@ -20,7 +20,8 @@ export function makeTokens(secret) {
 // Sets req.user and req.timeZone, or answers 401.
 // The browser names its zone in X-Time-Zone; the current request is read in it.
 // When logic says so, the zone is stored on the user, and onTimeZoneChange(userId)
-// runs after the response so derived data can follow it.
+// runs once after the response, on 'finish' or on 'close' (a dropped
+// connection), whichever comes first, so derived data can follow it.
 // now: () => Date.
 export function makeAuthenticate({ db, tokens, defaultTimeZone, now, onTimeZoneChange }) {
   const findUser = db.prepare('SELECT id, name, email, avatar_url, role, timezone, timezone_updated_at, created_at FROM users WHERE id = ?');
@@ -43,7 +44,16 @@ export function makeAuthenticate({ db, tokens, defaultTimeZone, now, onTimeZoneC
       setTimeZone.run(zone, at.toISOString(), row.id);
       row = { ...row, timezone: zone };
       const userId = row.id;
-      res.once('finish', () => onTimeZoneChange(userId));
+      let scheduled = true;
+      const rebuildOnce = () => {
+        if (!scheduled) return;
+        scheduled = false;
+        res.off('finish', rebuildOnce);
+        res.off('close', rebuildOnce);
+        onTimeZoneChange(userId);
+      };
+      res.on('finish', rebuildOnce);
+      res.on('close', rebuildOnce);
     }
     req.user = pick(row, USER_FIELDS);
     req.timeZone = resolveTimeZone({ header: zoneHeader, stored: row.timezone, fallback: defaultTimeZone });

@@ -66,6 +66,17 @@ describe('API time zones', () => {
     assert.deepEqual(r, { status: 400, body: { error: 'Visit time must include a time zone' } });
   });
 
+  it('a visit time with an offset is stored in UTC', async () => {
+    const created = await call('POST', '/meals', { token: user.token, body: { restaurant_id: place.id, rating: 4, visited_at: '2026-03-29T12:30:00+08:00' } });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.visited_at, '2026-03-29T04:30:00.000Z');
+    const updated = await call('PUT', `/meals/${created.body.id}`, { token: user.token, body: { visited_at: '2026-03-28T16:30:00-04:00' } });
+    assert.equal(updated.body.visited_at, SAT_EVENING_UTC);
+    assert.equal(db.prepare('SELECT visited_at FROM meals WHERE id = ?').get(created.body.id).visited_at, SAT_EVENING_UTC);
+    assert.equal((await call('DELETE', `/meals/${created.body.id}`, { token: user.token })).status, 204);
+    assert.deepEqual(await slots(), ['0|breakfast']);
+  });
+
   it('an invalid header is ignored', async () => {
     for (const zone of ['Mars/Olympus', '+08:00']) {
       assert.equal((await me({ 'X-Time-Zone': zone })).timezone, null);
