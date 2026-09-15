@@ -16,11 +16,14 @@ export function categorizeDish(dishName, typeNames) {
 }
 
 // A meal's dishes as sent by a client: strings or { name, category }.
-// Drops blank names; fills a missing category from the dish types.
+// Drops blank names and any other entry (null, a number, ...); fills a missing
+// category from the dish types.
 export function normalizeMealDishes(dishes, typeNames) {
   const out = [];
   for (const dish of dishes) {
-    const name = typeof dish === 'object' ? dish.name?.trim() : typeof dish === 'string' ? dish.trim() : null;
+    const name = typeof dish === 'string' ? dish.trim()
+      : (dish && typeof dish === 'object' && typeof dish.name === 'string') ? dish.name.trim()
+        : '';
     if (!name) continue;
     const category = (typeof dish === 'object' && dish.category) ? dish.category : categorizeDish(name, typeNames);
     out.push({ name, category });

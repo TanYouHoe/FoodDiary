@@ -8,7 +8,7 @@ export function pick(row, fields) {
   return out;
 }
 
-export const USER_FIELDS = ['id', 'name', 'email', 'avatar_url', 'created_at'];
+export const USER_FIELDS = ['id', 'name', 'email', 'avatar_url', 'role', 'created_at'];
 
 export const RESTAURANT_FIELDS = [
   'id', 'name', 'cuisine_type', 'price_range', 'address', 'lat', 'lng', 'photo_url', 'added_by', 'created_at',

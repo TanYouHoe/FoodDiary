@@ -14,7 +14,7 @@ export function makeTokens(secret) {
 
 // Sets req.user, or answers 401.
 export function makeAuthenticate({ db, tokens }) {
-  const findUser = db.prepare('SELECT id, name, email, avatar_url, created_at FROM users WHERE id = ?');
+  const findUser = db.prepare('SELECT id, name, email, avatar_url, role, created_at FROM users WHERE id = ?');
   return (req, res, next) => {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token required' });

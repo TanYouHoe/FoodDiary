@@ -7,6 +7,7 @@ import cors from 'cors';
 import { join } from 'node:path';
 import { makeTokens, makeAuthenticate, verifyGoogleCredential } from './auth.js';
 import { makeUpload } from './uploads.js';
+import { makeGroupAccess } from './guards.js';
 import { rebuildProfile } from './profile-store.js';
 import { authRoutes } from './routes/auth.js';
 import { restaurantRoutes } from './routes/restaurants.js';
@@ -30,6 +31,7 @@ export function createApp({
   const tokens = makeTokens(jwtSecret);
   const authenticate = makeAuthenticate({ db, tokens });
   const upload = makeUpload(uploadsDir);
+  const groupAllowed = makeGroupAccess(db);
 
   // The profile is derived data. A failed rebuild must not fail the meal change.
   const refreshProfile = (userId) => {
@@ -50,10 +52,10 @@ export function createApp({
   app.use('/api/meal-types', authenticate, mealTypeRoutes({ db }));
   app.use('/api/dish-types', authenticate, dishTypeRoutes({ db }));
   app.use('/api/dishes', authenticate, dishRoutes({ db }));
-  app.use('/api/meals', authenticate, mealRoutes({ db, upload, refreshProfile }));
-  app.use('/api/groups', authenticate, groupRoutes({ db }));
-  app.use('/api/planned', authenticate, plannedRoutes({ db }));
-  app.use('/api/suggest', authenticate, suggestRoutes({ db, now, rng }));
+  app.use('/api/meals', authenticate, mealRoutes({ db, upload, refreshProfile, groupAllowed }));
+  app.use('/api/groups', authenticate, groupRoutes({ db, groupAllowed }));
+  app.use('/api/planned', authenticate, plannedRoutes({ db, groupAllowed }));
+  app.use('/api/suggest', authenticate, suggestRoutes({ db, now, rng, groupAllowed }));
   app.use('/api/profile', authenticate, profileRoutes({ db }));
 
   // SPA fallback

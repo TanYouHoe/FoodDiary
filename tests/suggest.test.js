@@ -88,11 +88,13 @@ describe('meal suggester rules', () => {
     assert.equal(effectivePriceRange(null, null), null);
   });
 
-  it('fills each slot from its pool and cross-fills when a pool is empty', () => {
+  it('fills each slot from its pool and cross-fills, labelled by source, when a pool is empty', () => {
     const out = assembleMealSuggestions(['familiar', 'new', 'familiar'], [r(1)], [r(2), r(3)]);
     assert.deepEqual(out.map(s => [s.id, s.suggestion_type, s.is_top_pick]), [
-      [1, 'familiar', true], [2, 'new', false], [3, 'familiar', false],
+      [1, 'familiar', true], [2, 'new', false], [3, 'new', false],
     ]);
+    const fromFamiliar = assembleMealSuggestions(['new'], [r(1)], []);
+    assert.deepEqual(fromFamiliar.map(s => [s.id, s.suggestion_type]), [[1, 'familiar']]);
   });
 
   it('never picks the same restaurant twice', () => {
@@ -156,10 +158,9 @@ describe('suggestMeal', () => {
   it('all-familiar rolls pick the most visited restaurants at the profile price', () => {
     addProfile(0.1, 25);
     const out = suggestMeal(db, { userId, now: testNow, rng: () => 0.99 });
-    // The third pick is cross-filled from the new pool but keeps its slot's
-    // label. Existing behaviour, recorded in the plan as a defect.
+    // The third pick is cross-filled from the new pool and labelled new.
     assert.deepEqual(out.map(s => [s.name, s.suggestion_type]), [
-      ['Fav Chinese', 'familiar'], ['Fav Malay', 'familiar'], ['New Thai', 'familiar'],
+      ['Fav Chinese', 'familiar'], ['Fav Malay', 'familiar'], ['New Thai', 'new'],
     ]);
     assert.equal(out[0].is_top_pick, true);
   });

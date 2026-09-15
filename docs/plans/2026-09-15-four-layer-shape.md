@@ -68,23 +68,23 @@ Largest file: `logic/suggest.js`, 197 lines. No file is over 400.
 | --- | --- |
 | 32 logic tests; `npm test` broken; auth tests needed a live server | **95 tests, 0 fail**, no server needed |
 
-## Findings — not fixed
+## Findings
 
-Each is existing behaviour. Each needs its own change, because each fix changes what a user sees.
+Each was existing behaviour when the move found it. Each needs its own change, because each fix changes what a user sees.
 
-| # | Finding | Where |
-| --- | --- | --- |
-| 1 | **No ownership checks.** Any signed-in user can edit or delete any restaurant, meal or planned visit by id, upload photos to any meal, and read any group's meals, planned visits and members (`?group_id=`, `/groups/:id/members`) without being a member. | `server/routes/*` |
-| 2 | **Stored XSS on the map.** Restaurant name, cuisine and address go into the info window as raw HTML. | `src/ui/lists.js` `infoWindowHtml` |
-| 3 | **Dashboard suggestion cards lose their data.** The page keeps only name, restaurant, cuisine, dishes and `reason`. The badge (`suggestion_type`), price, stars and the server's `explanation` are dropped, and `reason` does not exist. The cards show a name and a cuisine only. | `src/ui/suggestions.js` `toMealSuggestions` |
-| 4 | **Meal period and weekday depend on the server's time zone.** The browser sends UTC; the server reads local hours. On a UTC host a Malaysian lunch is breakfast. | `logic/meal-period.js` |
-| 5 | **The log-a-meal date defaults to the UTC day** while the time defaults to local time. Between midnight and 08:00 in Malaysia the date is yesterday. | `src/ui/format.js` `utcDateInput` |
-| 6 | **A cross-filled suggestion keeps its slot's label.** A "familiar" slot filled from the new pool is labelled familiar. | `logic/suggest.js` `assembleMealSuggestions` |
-| 7 | **Custom dish types are invisible.** The server categorises a dish as a custom type (e.g. `curry`); the dish chips show only the nine built-in categories, so those dishes disappear from the dish editor and the meal detail. | `src/ui/dishes.js` `groupDishes` |
-| 8 | **Form checks disagree across the wire.** The browser rejects a blank meal-type name and an empty slot list; the server accepts `"  "` and `[]`. The server stores a dish type named `"  "` as `""`. | `logic/catalog.js` |
-| 9 | **`PUT /api/restaurants/:id` without `name` is a 500** (NOT NULL). No validation on update. | `logic/restaurants.js` `toRestaurantUpdate` |
-| 10 | **A `null` in a meal's `dishes` array is a 500.** `typeof null === 'object'`. | `logic/dishes.js` `normalizeMealDishes` |
-| 11 | **`JWT_SECRET` falls back to a public default.** | `server.js` |
-| 12 | **"+ New" restaurant from the log-a-meal dialog reloads the page.** The add-restaurant `<form>` renders inside the log-a-meal `<form>`. Clicking *Add Restaurant* there fires a native `GET /dashboard?`: no restaurant is created and the half-filled meal is lost. Reproduced in the browser on the pre-refactor build (baseline worktree, port 3997) and on the refactored build — identical. Adding a restaurant from the Restaurants page works. | `src/widgets/AddMealModal.jsx`, `src/widgets/MealDetailModal.jsx` |
-| 13 | **Photo preview URLs are never revoked.** The old code created one per render; the new code one per change. Revoking in an effect breaks previews under StrictMode, so it needs a different design. | `src/hooks/usePhotoPicker.js` |
-| 14 | **Google sign-in returns the old avatar** in the response right after it sets a new one. | `server/routes/auth.js` |
+| # | Finding | Where | Status |
+| --- | --- | --- | --- |
+| 1 | **No ownership checks.** Any signed-in user can edit or delete any restaurant, meal or planned visit by id, upload photos to any meal, and read any group's meals, planned visits and members (`?group_id=`, `/groups/:id/members`) without being a member. | `server/routes/*` | Fixed — fix(server): ownership checks and input defects |
+| 2 | **Stored XSS on the map.** Restaurant name, cuisine and address go into the info window as raw HTML. | `src/ui/lists.js` `infoWindowHtml` | Open |
+| 3 | **Dashboard suggestion cards lose their data.** The page keeps only name, restaurant, cuisine, dishes and `reason`. The badge (`suggestion_type`), price, stars and the server's `explanation` are dropped, and `reason` does not exist. The cards show a name and a cuisine only. | `src/ui/suggestions.js` `toMealSuggestions` | Open |
+| 4 | **Meal period and weekday depend on the server's time zone.** The browser sends UTC; the server reads local hours. On a UTC host a Malaysian lunch is breakfast. | `logic/meal-period.js` | Open |
+| 5 | **The log-a-meal date defaults to the UTC day** while the time defaults to local time. Between midnight and 08:00 in Malaysia the date is yesterday. | `src/ui/format.js` `utcDateInput` | Open |
+| 6 | **A cross-filled suggestion keeps its slot's label.** A "familiar" slot filled from the new pool is labelled familiar. | `logic/suggest.js` `assembleMealSuggestions` | Fixed — fix(server): ownership checks and input defects |
+| 7 | **Custom dish types are invisible.** The server categorises a dish as a custom type (e.g. `curry`); the dish chips show only the nine built-in categories, so those dishes disappear from the dish editor and the meal detail. | `src/ui/dishes.js` `groupDishes` | Open |
+| 8 | **Form checks disagree across the wire.** The browser rejects a blank meal-type name and an empty slot list; the server accepts `"  "` and `[]`. The server stores a dish type named `"  "` as `""`. | `logic/catalog.js` | Fixed — fix(server): ownership checks and input defects |
+| 9 | **`PUT /api/restaurants/:id` without `name` is a 500** (NOT NULL). No validation on update. | `logic/restaurants.js` `toRestaurantUpdate` | Fixed — fix(server): ownership checks and input defects |
+| 10 | **A `null` in a meal's `dishes` array is a 500.** `typeof null === 'object'`. | `logic/dishes.js` `normalizeMealDishes` | Fixed — fix(server): ownership checks and input defects |
+| 11 | **`JWT_SECRET` falls back to a public default.** | `server.js` | Fixed — fix(server): ownership checks and input defects |
+| 12 | **"+ New" restaurant from the log-a-meal dialog reloads the page.** The add-restaurant `<form>` renders inside the log-a-meal `<form>`. Clicking *Add Restaurant* there fires a native `GET /dashboard?`: no restaurant is created and the half-filled meal is lost. Reproduced in the browser on the pre-refactor build (baseline worktree, port 3997) and on the refactored build — identical. Adding a restaurant from the Restaurants page works. | `src/widgets/AddMealModal.jsx`, `src/widgets/MealDetailModal.jsx` | Open |
+| 13 | **Photo preview URLs are never revoked.** The old code created one per render; the new code one per change. Revoking in an effect breaks previews under StrictMode, so it needs a different design. | `src/hooks/usePhotoPicker.js` | Open |
+| 14 | **Google sign-in returns the old avatar** in the response right after it sets a new one. | `server/routes/auth.js` | Fixed — fix(server): ownership checks and input defects |

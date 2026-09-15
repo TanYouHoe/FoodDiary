@@ -4,8 +4,10 @@
 import { Router } from 'express';
 import { checkNewMeal, toMealPatch, MAX_MEAL_PHOTOS } from '../../logic/meals.js';
 import { normalizeMealDishes } from '../../logic/dishes.js';
+import { canChangeMeal } from '../../logic/access.js';
 import { pick, MEAL_FIELDS, MEAL_DISH_FIELDS, DISH_SUMMARY_FIELDS } from '../rows.js';
 import { uploadedUrl } from '../uploads.js';
+import { guardRecord, notAllowed } from '../guards.js';
 
 const MEAL_SELECT = `
   SELECT m.*, r.name as restaurant_name, r.cuisine_type, u.name as user_name
@@ -14,8 +16,10 @@ const MEAL_SELECT = `
   JOIN users u ON u.id = m.user_id
 `;
 
-export function mealRoutes({ db, upload, refreshProfile }) {
+export function mealRoutes({ db, upload, refreshProfile, groupAllowed }) {
   const r = Router();
+  const mealRow = db.prepare('SELECT * FROM meals WHERE id = ?');
+  const mayChange = guardRecord((id) => mealRow.get(id), canChangeMeal);
   const dishesOf = db.prepare('SELECT id, name, category FROM meal_dishes WHERE meal_id = ?');
   const mealById = db.prepare(`${MEAL_SELECT} WHERE m.id = ?`);
   const insertDish = db.prepare('INSERT INTO meal_dishes (meal_id, name, category) VALUES (?, ?, ?)');
@@ -32,6 +36,7 @@ export function mealRoutes({ db, upload, refreshProfile }) {
 
   r.get('/', (req, res) => {
     const { restaurant_id, group_id } = req.query;
+    if (!groupAllowed(group_id, req.user.id)) return notAllowed(res);
     let sql = `${MEAL_SELECT} WHERE 1=1`;
     const params = [];
     if (restaurant_id) { sql += ' AND m.restaurant_id = ?'; params.push(Number(restaurant_id)); }
@@ -45,6 +50,7 @@ export function mealRoutes({ db, upload, refreshProfile }) {
     const input = checkNewMeal(req.body);
     if (!input.ok) return res.status(400).json({ error: input.error });
     const v = input.value;
+    if (!groupAllowed(v.group_id, req.user.id)) return notAllowed(res);
     const info = db.prepare(
       'INSERT INTO meals (restaurant_id, user_id, group_id, title, calories, rating, notes, visited_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     ).run(v.restaurant_id, req.user.id, v.group_id, v.title, v.calories, v.rating, v.notes, v.visited_at);
@@ -53,21 +59,21 @@ export function mealRoutes({ db, upload, refreshProfile }) {
     refreshProfile(req.user.id);
   });
 
-  r.post('/:id/photos', upload.array('photos', MAX_MEAL_PHOTOS), (req, res) => {
+  r.post('/:id/photos', mayChange, upload.array('photos', MAX_MEAL_PHOTOS), (req, res) => {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'At least one photo required (JPEG, PNG, or WebP, max 5MB each)' });
     }
-    const meal = db.prepare('SELECT photo_urls FROM meals WHERE id = ?').get(req.params.id);
-    const existing = meal ? JSON.parse(meal.photo_urls || '[]') : [];
+    const existing = JSON.parse(req.record.photo_urls || '[]');
     const photoUrls = [...existing, ...req.files.map(uploadedUrl)];
     db.prepare('UPDATE meals SET photo_urls = ? WHERE id = ?').run(JSON.stringify(photoUrls), req.params.id);
     res.json({ photo_urls: photoUrls });
   });
 
-  r.put('/:id', (req, res) => {
+  r.put('/:id', mayChange, (req, res) => {
     const patch = toMealPatch(req.body);
     if (!patch.ok) return res.status(400).json({ error: patch.error });
     const { fields, dishes } = patch.value;
+    if (!groupAllowed(fields.group_id, req.user.id)) return notAllowed(res);
     const columns = Object.keys(fields);
     if (columns.length > 0) {
       db.prepare(`UPDATE meals SET ${columns.map(c => `${c} = ?`).join(', ')} WHERE id = ?`)
@@ -81,7 +87,7 @@ export function mealRoutes({ db, upload, refreshProfile }) {
     refreshProfile(req.user.id);
   });
 
-  r.delete('/:id', (req, res) => {
+  r.delete('/:id', mayChange, (req, res) => {
     db.prepare('DELETE FROM meals WHERE id = ?').run(req.params.id);
     res.status(204).end();
     refreshProfile(req.user.id);

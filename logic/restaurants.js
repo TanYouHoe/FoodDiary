@@ -6,31 +6,21 @@ export const DEFAULT_PRICE_RANGE = 2;
 
 const optional = (v) => v || null;
 
-export function checkNewRestaurant(body) {
+// A new restaurant, or the full replacement of one.
+export function checkRestaurantInput(body) {
   const { name, cuisine_type, price_range, address, lat, lng } = body;
-  if (!name?.trim()) return { ok: false, error: 'Name required' };
+  const cleanName = typeof name === 'string' ? name.trim() : '';
+  if (!cleanName) return { ok: false, error: 'Name required' };
   return {
     ok: true,
     value: {
-      name: name.trim(),
+      name: cleanName,
       cuisine_type: optional(cuisine_type),
       price_range: optional(price_range),
       address: optional(address),
       lat: optional(lat),
       lng: optional(lng),
     },
-  };
-}
-
-export function toRestaurantUpdate(body) {
-  const { name, cuisine_type, price_range, address, lat, lng } = body;
-  return {
-    name,
-    cuisine_type: optional(cuisine_type),
-    price_range: optional(price_range),
-    address: optional(address),
-    lat: optional(lat),
-    lng: optional(lng),
   };
 }
 

@@ -187,7 +187,8 @@ export function tagAsNew(restaurants) {
   }));
 }
 
-// Fills each slot from its own pool, or from the other pool when that one is empty.
+// Fills each slot from its own pool, or from the other pool when that one is
+// empty. A suggestion is labelled with the pool it came from.
 export function assembleMealSuggestions(slotTypes, familiarPool, newPool) {
   const pools = { familiar: familiarPool, new: newPool };
   const cursors = { familiar: 0, new: 0 };
@@ -205,10 +206,15 @@ export function assembleMealSuggestions(slotTypes, familiarPool, newPool) {
   for (const slotType of slotTypes) {
     if (results.length >= SUGGESTION_COUNT) break;
     const other = slotType === 'familiar' ? 'new' : 'familiar';
-    const picked = take(slotType) || take(other);
+    let source = slotType;
+    let picked = take(slotType);
+    if (!picked) {
+      source = other;
+      picked = take(other);
+    }
     if (picked) {
       used.add(picked.id);
-      results.push({ ...picked, suggestion_type: slotType, is_top_pick: results.length === 0 });
+      results.push({ ...picked, suggestion_type: source, is_top_pick: results.length === 0 });
     }
   }
   return results;

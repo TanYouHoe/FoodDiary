@@ -4,11 +4,12 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { checkGroupName, checkInviteCode, OWNER_ROLE, INVITE_CODE_BYTES } from '../../logic/accounts.js';
 import { pick, GROUP_FIELDS, GROUP_MEMBER_FIELDS } from '../rows.js';
+import { notAllowed } from '../guards.js';
 
 const newInviteCode = () => crypto.randomBytes(INVITE_CODE_BYTES).toString('hex');
 const toGroup = (row) => pick(row, GROUP_FIELDS);
 
-export function groupRoutes({ db }) {
+export function groupRoutes({ db, groupAllowed }) {
   const r = Router();
   const getById = db.prepare('SELECT * FROM groups_ WHERE id = ?');
 
@@ -34,6 +35,7 @@ export function groupRoutes({ db }) {
   });
 
   r.get('/:id/members', (req, res) => {
+    if (!groupAllowed(req.params.id, req.user.id)) return notAllowed(res);
     const rows = db.prepare(`
       SELECT u.id, u.name, u.email, u.avatar_url, gm.role, gm.joined_at
       FROM group_members gm

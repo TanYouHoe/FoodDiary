@@ -11,7 +11,7 @@ const BCRYPT_ROUNDS = 10;
 export function authRoutes({ db, tokens, authenticate, verifyGoogle, googleClientId }) {
   const r = Router();
   const byEmail = db.prepare('SELECT * FROM users WHERE email = ?');
-  const byId = db.prepare('SELECT id, name, email, avatar_url, created_at FROM users WHERE id = ?');
+  const byId = db.prepare('SELECT id, name, email, avatar_url, role, created_at FROM users WHERE id = ?');
   const insertUser = db.prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)');
   const insertGoogleUser = db.prepare('INSERT INTO users (name, email, password_hash, avatar_url) VALUES (?, ?, ?, ?)');
   const setAvatar = db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?');
@@ -24,7 +24,7 @@ export function authRoutes({ db, tokens, authenticate, verifyGoogle, googleClien
 
     const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const info = insertUser.run(name, email, hash);
-    const user = { id: info.lastInsertRowid, name, email };
+    const user = pick(byId.get(info.lastInsertRowid), USER_FIELDS);
     res.status(201).json({ token: tokens.sign(user.id), user });
   });
 
@@ -58,7 +58,7 @@ export function authRoutes({ db, tokens, authenticate, verifyGoogle, googleClien
         user = pick(byId.get(info.lastInsertRowid), USER_FIELDS);
       } else {
         if (shouldAdoptPicture(picture, existing)) setAvatar.run(picture, existing.id);
-        user = pick(existing, USER_FIELDS);
+        user = pick(byId.get(existing.id), USER_FIELDS);
       }
       res.json({ token: tokens.sign(user.id), user });
     } catch {

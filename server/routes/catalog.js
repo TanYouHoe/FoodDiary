@@ -2,15 +2,31 @@
 
 import { Router } from 'express';
 import { checkMealTypeInput, checkDishTypeInput, builtInLockError } from '../../logic/catalog.js';
+import { canChangeCatalogEntry } from '../../logic/access.js';
 import { pick, MEAL_TYPE_FIELDS, DISH_TYPE_FIELDS } from '../rows.js';
+import { notFound, notAllowed } from '../guards.js';
 
 const toMealType = (row) => ({ ...pick(row, MEAL_TYPE_FIELDS), slots: JSON.parse(row.slots) });
 const toDishType = (row) => pick(row, DISH_TYPE_FIELDS);
 const isUniqueViolation = (err) => err.message?.includes('UNIQUE');
 
+// kind: 'meal' | 'dish'; action: 'edit' | 'delete'. Answers 404, the built-in
+// lock (403) or the ownership refusal (403), in that order; else continues.
+function mayChangeEntry(getById, kind, action, missing) {
+  return (req, res, next) => {
+    const row = getById.get(req.params.id);
+    if (!row) return notFound(res, missing);
+    const locked = builtInLockError(row, kind, action);
+    if (locked) return res.status(403).json({ error: locked });
+    if (!canChangeCatalogEntry(req.user, row)) return notAllowed(res);
+    next();
+  };
+}
+
 export function mealTypeRoutes({ db }) {
   const r = Router();
   const getById = db.prepare('SELECT * FROM meal_types WHERE id = ?');
+  const MISSING = 'Meal type not found';
 
   r.get('/', (req, res) => {
     const { cuisine_type } = req.query;
@@ -28,16 +44,12 @@ export function mealTypeRoutes({ db }) {
     const input = checkMealTypeInput(req.body);
     if (!input.ok) return res.status(400).json({ error: input.error });
     const { name, cuisine_type, slots } = input.value;
-    const info = db.prepare('INSERT INTO meal_types (name, cuisine_type, slots) VALUES (?, ?, ?)')
-      .run(name, cuisine_type, JSON.stringify(slots));
+    const info = db.prepare('INSERT INTO meal_types (name, cuisine_type, slots, created_by) VALUES (?, ?, ?, ?)')
+      .run(name, cuisine_type, JSON.stringify(slots), req.user.id);
     res.status(201).json(toMealType(getById.get(info.lastInsertRowid)));
   });
 
-  r.put('/:id', (req, res) => {
-    const row = getById.get(req.params.id);
-    if (!row) return res.status(404).json({ error: 'Meal type not found' });
-    const locked = builtInLockError(row, 'meal', 'edit');
-    if (locked) return res.status(403).json({ error: locked });
+  r.put('/:id', mayChangeEntry(getById, 'meal', 'edit', MISSING), (req, res) => {
     const input = checkMealTypeInput(req.body);
     if (!input.ok) return res.status(400).json({ error: input.error });
     const { name, cuisine_type, slots } = input.value;
@@ -46,11 +58,7 @@ export function mealTypeRoutes({ db }) {
     res.json(toMealType(getById.get(req.params.id)));
   });
 
-  r.delete('/:id', (req, res) => {
-    const row = getById.get(req.params.id);
-    if (!row) return res.status(404).json({ error: 'Meal type not found' });
-    const locked = builtInLockError(row, 'meal', 'delete');
-    if (locked) return res.status(403).json({ error: locked });
+  r.delete('/:id', mayChangeEntry(getById, 'meal', 'delete', MISSING), (req, res) => {
     db.prepare('DELETE FROM meal_types WHERE id = ?').run(req.params.id);
     res.status(204).end();
   });
@@ -61,6 +69,7 @@ export function mealTypeRoutes({ db }) {
 export function dishTypeRoutes({ db }) {
   const r = Router();
   const getById = db.prepare('SELECT * FROM dish_types WHERE id = ?');
+  const MISSING = 'Dish type not found';
   const duplicate = (res) => res.status(409).json({ error: 'A dish type with that name already exists' });
 
   r.get('/', (req, res) => {
@@ -71,7 +80,8 @@ export function dishTypeRoutes({ db }) {
     const input = checkDishTypeInput(req.body);
     if (!input.ok) return res.status(400).json({ error: input.error });
     try {
-      const info = db.prepare('INSERT INTO dish_types (name, keywords) VALUES (?, ?)').run(input.value.name, '[]');
+      const info = db.prepare('INSERT INTO dish_types (name, keywords, created_by) VALUES (?, ?, ?)')
+        .run(input.value.name, '[]', req.user.id);
       res.status(201).json(toDishType(getById.get(info.lastInsertRowid)));
     } catch (err) {
       if (isUniqueViolation(err)) return duplicate(res);
@@ -79,11 +89,7 @@ export function dishTypeRoutes({ db }) {
     }
   });
 
-  r.put('/:id', (req, res) => {
-    const row = getById.get(req.params.id);
-    if (!row) return res.status(404).json({ error: 'Dish type not found' });
-    const locked = builtInLockError(row, 'dish', 'edit');
-    if (locked) return res.status(403).json({ error: locked });
+  r.put('/:id', mayChangeEntry(getById, 'dish', 'edit', MISSING), (req, res) => {
     const input = checkDishTypeInput(req.body);
     if (!input.ok) return res.status(400).json({ error: input.error });
     try {
@@ -95,11 +101,7 @@ export function dishTypeRoutes({ db }) {
     }
   });
 
-  r.delete('/:id', (req, res) => {
-    const row = getById.get(req.params.id);
-    if (!row) return res.status(404).json({ error: 'Dish type not found' });
-    const locked = builtInLockError(row, 'dish', 'delete');
-    if (locked) return res.status(403).json({ error: locked });
+  r.delete('/:id', mayChangeEntry(getById, 'dish', 'delete', MISSING), (req, res) => {
     db.prepare('DELETE FROM dish_types WHERE id = ?').run(req.params.id);
     res.status(204).end();
   });

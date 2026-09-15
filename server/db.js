@@ -3,6 +3,9 @@
 
 import Database from 'better-sqlite3';
 import { SEED_MEAL_TYPES, SEED_DISH_TYPE_NAMES } from '../logic/catalog.js';
+import { USER_ROLES, ownerToPromote } from '../logic/access.js';
+
+const ROLE_LIST = Object.values(USER_ROLES).map(role => `'${role}'`).join(',');
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -123,6 +126,9 @@ const ADDED_COLUMNS = [
   ['meal_dishes', 'slot_name', 'TEXT'],
   ['meal_dishes', 'category', 'TEXT'],
   ['meal_types', 'is_seed', 'INTEGER DEFAULT 0'],
+  ['users', 'role', `TEXT NOT NULL DEFAULT '${USER_ROLES.member}' CHECK(role IN (${ROLE_LIST}))`],
+  ['meal_types', 'created_by', 'INTEGER REFERENCES users(id)'],
+  ['dish_types', 'created_by', 'INTEGER REFERENCES users(id)'],
 ];
 
 function migrate(db) {
@@ -152,6 +158,12 @@ function seed(db) {
   }
 }
 
+// Makes a user the owner when nobody is (logic/access.js decides who). Idempotent.
+export function promoteOwner(db) {
+  const id = ownerToPromote(db.prepare('SELECT id, role FROM users').all());
+  if (id != null) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(USER_ROLES.owner, id);
+}
+
 // path: a file path or ':memory:'
 export function openDatabase(path) {
   const db = new Database(path);
@@ -160,5 +172,6 @@ export function openDatabase(path) {
   db.exec(SCHEMA);
   migrate(db);
   seed(db);
+  promoteOwner(db);
   return db;
 }

@@ -25,34 +25,33 @@ export function builtInLockError(entry, kind, action) {
   return entry.is_seed ? `Cannot ${action} built-in ${kind} types` : null;
 }
 
+const trimmed = (value) => (typeof value === 'string' ? value.trim() : '');
+
+// A meal type needs a name and at least one named slot. Blank slots are dropped.
 export function checkMealTypeInput(body) {
   const { name, cuisine_type, slots: slotList } = body;
-  if (!name || !slotList) return { ok: false, error: 'Name and slots required' };
-  return { ok: true, value: { name, cuisine_type: cuisine_type || null, slots: slotList } };
+  const cleanName = trimmed(name);
+  if (!cleanName) return { ok: false, error: 'Name is required' };
+  const cleanSlots = (Array.isArray(slotList) ? slotList : [])
+    .map(slot => trimmed(slot?.name))
+    .filter(Boolean)
+    .map(slotName => ({ name: slotName }));
+  if (cleanSlots.length === 0) return { ok: false, error: 'Add at least one slot' };
+  return { ok: true, value: { name: cleanName, cuisine_type: cuisine_type || null, slots: cleanSlots } };
 }
 
 export function checkDishTypeInput(body) {
-  const { name } = body;
+  const name = trimmed(body.name);
   if (!name) return { ok: false, error: 'Name is required' };
-  return { ok: true, value: { name: name.trim() } };
+  return { ok: true, value: { name } };
 }
 
-// The form in the add / edit meal type dialog. Returns an error or the body.
+// The add / edit meal type dialog: maps the form to the API body and asks the
+// same rule the server asks.
 export function checkMealTypeForm({ name, cuisineType, slots: slotList }) {
-  if (!name.trim()) return { ok: false, error: 'Name is required' };
-  const validSlots = slotList.filter(s => s.name.trim());
-  if (validSlots.length === 0) return { ok: false, error: 'Add at least one slot' };
-  return {
-    ok: true,
-    value: {
-      name: name.trim(),
-      cuisine_type: cuisineType || null,
-      slots: validSlots.map(s => ({ name: s.name.trim() })),
-    },
-  };
+  return checkMealTypeInput({ name, cuisine_type: cuisineType, slots: slotList });
 }
 
 export function checkDishTypeForm(name) {
-  if (!name.trim()) return { ok: false, error: 'Name is required' };
-  return { ok: true, value: { name: name.trim() } };
+  return checkDishTypeInput({ name });
 }

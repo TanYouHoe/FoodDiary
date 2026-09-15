@@ -5,7 +5,7 @@
 // assertions against a server that is already running on a fresh database.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,11 +19,12 @@ const PNG = Buffer.from(
   'base64',
 );
 
-async function call(method, path, { body, token } = {}) {
+// at: the API base URL; defaults to the shared server.
+async function call(method, path, { body, token, at = base } = {}) {
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${base}${path}`, {
+  const res = await fetch(`${at}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -34,10 +35,10 @@ async function call(method, path, { body, token } = {}) {
   return { status: res.status, body: parsed };
 }
 
-async function upload(path, field, count, token) {
+async function upload(path, field, count, token, at = base) {
   const form = new FormData();
   for (let i = 0; i < count; i++) form.append(field, new Blob([PNG], { type: 'image/png' }), `p${i}.png`);
-  const res = await fetch(`${base}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form });
+  const res = await fetch(`${at}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form });
   return { status: res.status, body: await res.json() };
 }
 
@@ -306,5 +307,200 @@ describe('API', () => {
     assert.equal((await call('GET', '/meals', { token })).body.length, 1);
     assert.equal((await call('DELETE', `/restaurants/${restaurantId}`, { token })).status, 204);
     assert.equal((await call('GET', `/restaurants/${restaurantId}`, { token })).status, 404);
+  });
+});
+
+// Ownership and access. Always runs on its own in-memory app, because it needs
+// the database handle to make the first user the owner and a fake Google verifier.
+describe('API ownership and access', () => {
+  let at;
+  let app2;
+  let db;
+  let dir;
+  const google = { payload: null };
+  const NOT_ALLOWED = { error: 'Not allowed' };
+  const NOT_FOUND = { error: 'Not found' };
+  let olive; // owner
+  let amy; // member who creates things
+  let ben; // another member
+  let restaurant;
+  let meal;
+  let planned;
+  let group;
+
+  const as = (who) => ({ token: who.token, at });
+  const req = (method, path, who, body) => call(method, path, { ...as(who), body });
+  const uploadAs = (path, field, who) => upload(path, field, 1, who.token, at);
+  const uploadedFiles = () => readdirSync(dir).length;
+  const register = async (name) => {
+    const r = await call('POST', '/auth/register', { at, body: { name, email: `${name}@own.test`, password: 'pw' } });
+    return { ...r.body.user, token: r.body.token };
+  };
+
+  before(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'fooddiary-own-'));
+    const { openDatabase, promoteOwner } = await import('../server/db.js');
+    const { createApp } = await import('../server/app.js');
+    db = openDatabase(':memory:');
+    const { app } = createApp({
+      db, uploadsDir: dir, jwtSecret: 'test-secret', verifyGoogle: async () => google.payload,
+    });
+    await new Promise(resolve => { app2 = app.listen(0, resolve); });
+    at = `http://127.0.0.1:${app2.address().port}/api`;
+    olive = await register('olive');
+    amy = await register('amy');
+    ben = await register('ben');
+    promoteOwner(db);
+  });
+
+  after(async () => {
+    if (app2) await new Promise(resolve => app2.close(resolve));
+    if (db) db.close();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('users carry a role; the first user is the owner', async () => {
+    assert.equal((await req('GET', '/auth/me', olive)).body.role, 'owner');
+    assert.equal((await req('GET', '/auth/me', amy)).body.role, 'member');
+    const login = await call('POST', '/auth/login', { at, body: { email: 'ben@own.test', password: 'pw' } });
+    assert.equal(login.body.user.role, 'member');
+  });
+
+  it('restaurants: only the adder or the owner may change them', async () => {
+    restaurant = (await req('POST', '/restaurants', amy, { name: 'Amy Place', cuisine_type: 'Thai', price_range: 2 })).body;
+
+    const before = uploadedFiles();
+    assert.deepEqual(await req('PUT', `/restaurants/${restaurant.id}`, ben, { name: 'Hijack' }), { status: 403, body: NOT_ALLOWED });
+    assert.deepEqual(await req('DELETE', `/restaurants/${restaurant.id}`, ben), { status: 403, body: NOT_ALLOWED });
+    assert.deepEqual(await uploadAs(`/restaurants/${restaurant.id}/photo`, 'photo', ben), { status: 403, body: NOT_ALLOWED });
+    assert.equal(uploadedFiles(), before, 'a refused upload leaves no file');
+    assert.equal((await req('GET', `/restaurants/${restaurant.id}`, amy)).body.name, 'Amy Place');
+
+    assert.deepEqual(await req('PUT', '/restaurants/9999', amy, { name: 'x' }), { status: 404, body: NOT_FOUND });
+    assert.deepEqual(await req('DELETE', '/restaurants/9999', amy), { status: 404, body: NOT_FOUND });
+    assert.deepEqual(await uploadAs('/restaurants/9999/photo', 'photo', amy), { status: 404, body: NOT_FOUND });
+    assert.equal(uploadedFiles(), before);
+
+    assert.deepEqual(await req('PUT', `/restaurants/${restaurant.id}`, amy, { cuisine_type: 'Thai' }), { status: 400, body: { error: 'Name required' } });
+    assert.equal((await req('PUT', `/restaurants/${restaurant.id}`, amy, { name: ' Amy Place 2 ' })).body.name, 'Amy Place 2');
+    assert.equal((await req('PUT', `/restaurants/${restaurant.id}`, olive, { name: 'Owner Fix' })).status, 200);
+    assert.equal((await uploadAs(`/restaurants/${restaurant.id}/photo`, 'photo', amy)).status, 200);
+    assert.equal((await uploadAs(`/restaurants/${restaurant.id}/photo`, 'photo', olive)).status, 200);
+  });
+
+  it('meals: only the user who logged it may change it', async () => {
+    const created = await req('POST', '/meals', amy, {
+      restaurant_id: restaurant.id, rating: 4, visited_at: '2026-09-01T12:00:00.000Z', dishes: [null, 5, 'Fried Rice'],
+    });
+    assert.equal(created.status, 201);
+    assert.deepEqual(created.body.dishes.map(d => d.name), ['Fried Rice']);
+    meal = created.body;
+
+    const before = uploadedFiles();
+    for (const who of [ben, olive]) {
+      assert.deepEqual(await req('PUT', `/meals/${meal.id}`, who, { rating: 1 }), { status: 403, body: NOT_ALLOWED });
+      assert.deepEqual(await req('DELETE', `/meals/${meal.id}`, who), { status: 403, body: NOT_ALLOWED });
+      assert.deepEqual(await uploadAs(`/meals/${meal.id}/photos`, 'photos', who), { status: 403, body: NOT_ALLOWED });
+    }
+    assert.equal(uploadedFiles(), before, 'a refused upload leaves no file');
+
+    assert.deepEqual(await req('PUT', '/meals/9999', amy, { rating: 1 }), { status: 404, body: NOT_FOUND });
+    assert.deepEqual(await req('DELETE', '/meals/9999', amy), { status: 404, body: NOT_FOUND });
+    assert.deepEqual(await uploadAs('/meals/9999/photos', 'photos', amy), { status: 404, body: NOT_FOUND });
+    assert.equal(uploadedFiles(), before);
+
+    const updated = await req('PUT', `/meals/${meal.id}`, amy, { rating: 5 });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.body.rating, 5);
+    assert.equal((await uploadAs(`/meals/${meal.id}/photos`, 'photos', amy)).body.photo_urls.length, 1);
+  });
+
+  it('planned visits: only the planner may delete one', async () => {
+    planned = (await req('POST', '/planned', amy, { restaurant_id: restaurant.id })).body;
+    assert.deepEqual(await req('DELETE', `/planned/${planned.id}`, ben), { status: 403, body: NOT_ALLOWED });
+    assert.deepEqual(await req('DELETE', `/planned/${planned.id}`, olive), { status: 403, body: NOT_ALLOWED });
+    assert.deepEqual(await req('DELETE', '/planned/9999', amy), { status: 404, body: NOT_FOUND });
+    assert.equal((await req('GET', '/planned', amy)).body.length, 1);
+    assert.equal((await req('DELETE', `/planned/${planned.id}`, amy)).status, 204);
+  });
+
+  it('meal types: only the creator or the owner may change a custom one', async () => {
+    assert.deepEqual(await req('POST', '/meal-types', amy, { name: '  ', slots: [{ name: 'Main' }] }), { status: 400, body: { error: 'Name is required' } });
+    assert.deepEqual(await req('POST', '/meal-types', amy, { name: 'X', slots: [] }), { status: 400, body: { error: 'Add at least one slot' } });
+    assert.equal((await req('POST', '/meal-types', amy, { name: 'X', slots: [{ name: ' ' }] })).status, 400);
+
+    const type = (await req('POST', '/meal-types', amy, { name: 'Amy Set', slots: [{ name: 'Main' }] })).body;
+    const body = { name: 'Changed', slots: [{ name: 'Side' }] };
+    assert.deepEqual(await req('PUT', `/meal-types/${type.id}`, ben, body), { status: 403, body: NOT_ALLOWED });
+    assert.deepEqual(await req('DELETE', `/meal-types/${type.id}`, ben), { status: 403, body: NOT_ALLOWED });
+    assert.equal((await req('PUT', `/meal-types/${type.id}`, amy, body)).status, 200);
+    assert.equal((await req('PUT', `/meal-types/${type.id}`, olive, body)).status, 200);
+    assert.equal((await req('DELETE', `/meal-types/${type.id}`, amy)).status, 204);
+    assert.deepEqual(await req('DELETE', `/meal-types/${type.id}`, amy), { status: 404, body: { error: 'Meal type not found' } });
+
+    const orphan = db.prepare("INSERT INTO meal_types (name, slots) VALUES ('Old', '[{\"name\":\"Main\"}]')").run().lastInsertRowid;
+    assert.deepEqual(await req('PUT', `/meal-types/${orphan}`, amy, body), { status: 403, body: NOT_ALLOWED });
+    assert.equal((await req('DELETE', `/meal-types/${orphan}`, olive)).status, 204);
+
+    const seed = (await req('GET', '/meal-types', olive)).body.find(t => t.is_seed === 1);
+    assert.deepEqual(await req('PUT', `/meal-types/${seed.id}`, olive, body), { status: 403, body: { error: 'Cannot edit built-in meal types' } });
+  });
+
+  it('dish types: only the creator or the owner may change a custom one', async () => {
+    assert.deepEqual(await req('POST', '/dish-types', amy, { name: '   ' }), { status: 400, body: { error: 'Name is required' } });
+    const type = (await req('POST', '/dish-types', amy, { name: 'Curry' })).body;
+    assert.deepEqual(await req('PUT', `/dish-types/${type.id}`, ben, { name: 'Stew' }), { status: 403, body: NOT_ALLOWED });
+    assert.deepEqual(await req('DELETE', `/dish-types/${type.id}`, ben), { status: 403, body: NOT_ALLOWED });
+    assert.equal((await req('PUT', `/dish-types/${type.id}`, olive, { name: 'Curries' })).body.name, 'Curries');
+    assert.deepEqual(await req('PUT', `/dish-types/${type.id}`, amy, { name: '  ' }), { status: 400, body: { error: 'Name is required' } });
+    assert.equal((await req('DELETE', `/dish-types/${type.id}`, amy)).status, 204);
+    assert.deepEqual(await req('DELETE', '/dish-types/9999', amy), { status: 404, body: { error: 'Dish type not found' } });
+
+    const orphan = db.prepare("INSERT INTO dish_types (name) VALUES ('Orphan')").run().lastInsertRowid;
+    assert.deepEqual(await req('DELETE', `/dish-types/${orphan}`, amy), { status: 403, body: NOT_ALLOWED });
+    assert.equal((await req('DELETE', `/dish-types/${orphan}`, olive)).status, 204);
+
+    const seed = (await req('GET', '/dish-types', olive)).body.find(t => t.is_seed === 1);
+    assert.deepEqual(await req('DELETE', `/dish-types/${seed.id}`, olive), { status: 403, body: { error: 'Cannot delete built-in dish types' } });
+  });
+
+  it('group data needs membership', async () => {
+    group = (await req('POST', '/groups', amy, { name: 'Amy Crew' })).body;
+    const g = group.id;
+    const reads = [`/meals?group_id=${g}`, `/planned?group_id=${g}`, `/suggest?group_id=${g}`, `/suggest?type=meal&group_id=${g}`, `/groups/${g}/members`];
+
+    for (const path of reads) assert.deepEqual(await req('GET', path, ben), { status: 403, body: NOT_ALLOWED }, path);
+    assert.deepEqual(
+      await req('POST', '/meals', ben, { restaurant_id: restaurant.id, rating: 3, visited_at: '2026-09-02T12:00:00.000Z', group_id: g }),
+      { status: 403, body: NOT_ALLOWED },
+    );
+    assert.deepEqual(await req('POST', '/planned', ben, { restaurant_id: restaurant.id, group_id: g }), { status: 403, body: NOT_ALLOWED });
+    const benMeal = (await req('POST', '/meals', ben, { restaurant_id: restaurant.id, rating: 3, visited_at: '2026-09-02T12:00:00.000Z' })).body;
+    assert.deepEqual(await req('PUT', `/meals/${benMeal.id}`, ben, { group_id: g }), { status: 403, body: NOT_ALLOWED });
+    assert.equal((await req('PUT', `/meals/${benMeal.id}`, ben, { group_id: null })).status, 200);
+
+    for (const path of reads) assert.equal((await req('GET', path, amy)).status, 200, path);
+    assert.equal((await req('POST', '/meals', amy, { restaurant_id: restaurant.id, rating: 4, visited_at: '2026-09-03T12:00:00.000Z', group_id: g })).status, 201);
+    assert.equal((await req('POST', '/planned', amy, { restaurant_id: restaurant.id, group_id: g })).status, 201);
+    assert.equal((await req('PUT', `/meals/${meal.id}`, amy, { group_id: g })).status, 200);
+
+    assert.equal((await req('POST', '/groups/join', ben, { invite_code: group.invite_code })).status, 201);
+    for (const path of reads) assert.equal((await req('GET', path, ben)).status, 200, path);
+    assert.equal((await req('GET', `/meals?group_id=${g}`, ben)).body.length, 2);
+    assert.equal((await req('PUT', `/meals/${benMeal.id}`, ben, { group_id: g })).status, 200);
+  });
+
+  it('google sign-in of an existing user returns the adopted avatar', async () => {
+    google.payload = { email: 'amy@own.test', name: 'Amy', picture: 'https://example.test/amy.png' };
+    const r = await call('POST', '/auth/google', { at, body: { credential: 'fake' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.user.avatar_url, 'https://example.test/amy.png');
+    assert.equal(r.body.user.role, 'member');
+    assert.equal((await req('GET', '/auth/me', amy)).body.avatar_url, 'https://example.test/amy.png');
+  });
+
+  it('the allowed user can still delete', async () => {
+    assert.equal((await req('DELETE', `/meals/${meal.id}`, amy)).status, 204);
+    assert.equal((await req('DELETE', `/restaurants/${restaurant.id}`, amy)).status, 204);
   });
 });
