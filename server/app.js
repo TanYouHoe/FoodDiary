@@ -6,7 +6,7 @@ import express from 'express';
 import cors from 'cors';
 import { join } from 'node:path';
 import { makeTokens, makeAuthenticate, verifyGoogleCredential } from './auth.js';
-import { makeUpload } from './uploads.js';
+import { makeUpload, isUploadError } from './uploads.js';
 import { makeGroupAccess } from './guards.js';
 import { rebuildProfile } from './profile-store.js';
 import { authRoutes } from './routes/auth.js';
@@ -60,6 +60,16 @@ export function createApp({
 
   // SPA fallback
   if (distDir) app.get('*splat', (req, res) => res.sendFile(join(distDir, 'index.html')));
+
+  // Last: every error becomes JSON. Upload limits and client errors the parser
+  // marks as safe to show keep their 4xx; anything else is logged and hidden.
+  app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (isUploadError(err)) return res.status(400).json({ error: err.message });
+    if (err.expose && err.status >= 400 && err.status < 500) return res.status(err.status).json({ error: err.message });
+    log(`[error] ${req.method} ${req.originalUrl}: ${err.stack || err.message}`);
+    res.status(500).json({ error: 'Internal error' });
+  });
 
   return { app };
 }

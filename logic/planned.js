@@ -1,5 +1,7 @@
 // Logic: planned visits and their priority.
 
+import { parseGroupId } from './accounts.js';
+
 // Highest first. The index is the sort rank.
 export const PRIORITIES = ['high', 'medium', 'low'];
 export const DEFAULT_PRIORITY = 'medium';
@@ -24,11 +26,13 @@ export function checkPlannedForm({ restaurantId, priority, notes }, groupId) {
 export function checkPlannedInput(body) {
   const { restaurant_id, group_id, priority, notes } = body;
   if (!restaurant_id) return { ok: false, error: 'Restaurant required' };
+  const group = parseGroupId(group_id);
+  if (!group.ok) return group;
   return {
     ok: true,
     value: {
       restaurant_id,
-      group_id: group_id || null,
+      group_id: group.value,
       priority: priority || DEFAULT_PRIORITY,
       notes: notes || null,
     },

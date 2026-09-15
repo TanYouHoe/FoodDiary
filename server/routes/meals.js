@@ -2,12 +2,13 @@
 // Every change to a meal asks for the user's profile to be rebuilt.
 
 import { Router } from 'express';
-import { checkNewMeal, toMealPatch, MAX_MEAL_PHOTOS } from '../../logic/meals.js';
+import { checkNewMeal, toMealPatch, mergeMealPhotos, MAX_MEAL_PHOTOS } from '../../logic/meals.js';
 import { normalizeMealDishes } from '../../logic/dishes.js';
 import { canChangeMeal } from '../../logic/access.js';
+import { parseGroupId } from '../../logic/accounts.js';
 import { pick, MEAL_FIELDS, MEAL_DISH_FIELDS, DISH_SUMMARY_FIELDS } from '../rows.js';
-import { uploadedUrl } from '../uploads.js';
-import { guardRecord, notAllowed } from '../guards.js';
+import { uploadedUrl, removeUploaded } from '../uploads.js';
+import { guardRecord, refuseUnless, badRequest, notFound, notAllowed } from '../guards.js';
 
 const MEAL_SELECT = `
   SELECT m.*, r.name as restaurant_name, r.cuisine_type, u.name as user_name
@@ -19,7 +20,8 @@ const MEAL_SELECT = `
 export function mealRoutes({ db, upload, refreshProfile, groupAllowed }) {
   const r = Router();
   const mealRow = db.prepare('SELECT * FROM meals WHERE id = ?');
-  const mayChange = guardRecord((id) => mealRow.get(id), canChangeMeal);
+  const mayChange = guardRecord((id) => mealRow.get(id), refuseUnless(canChangeMeal));
+  const setPhotos = db.prepare('UPDATE meals SET photo_urls = ? WHERE id = ?');
   const dishesOf = db.prepare('SELECT id, name, category FROM meal_dishes WHERE meal_id = ?');
   const mealById = db.prepare(`${MEAL_SELECT} WHERE m.id = ?`);
   const insertDish = db.prepare('INSERT INTO meal_dishes (meal_id, name, category) VALUES (?, ?, ?)');
@@ -35,12 +37,14 @@ export function mealRoutes({ db, upload, refreshProfile, groupAllowed }) {
   };
 
   r.get('/', (req, res) => {
-    const { restaurant_id, group_id } = req.query;
-    if (!groupAllowed(group_id, req.user.id)) return notAllowed(res);
+    const { restaurant_id } = req.query;
+    const group = parseGroupId(req.query.group_id);
+    if (!group.ok) return badRequest(res, group.error);
+    if (!groupAllowed(group.value, req.user.id)) return notAllowed(res);
     let sql = `${MEAL_SELECT} WHERE 1=1`;
     const params = [];
     if (restaurant_id) { sql += ' AND m.restaurant_id = ?'; params.push(Number(restaurant_id)); }
-    if (group_id) { sql += ' AND m.group_id = ?'; params.push(Number(group_id)); }
+    if (group.value !== null) { sql += ' AND m.group_id = ?'; params.push(group.value); }
     else { sql += ' AND m.user_id = ?'; params.push(req.user.id); }
     sql += ' ORDER BY m.visited_at DESC';
     res.json(db.prepare(sql).all(...params).map(toMeal));
@@ -63,26 +67,42 @@ export function mealRoutes({ db, upload, refreshProfile, groupAllowed }) {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'At least one photo required (JPEG, PNG, or WebP, max 5MB each)' });
     }
-    const existing = JSON.parse(req.record.photo_urls || '[]');
-    const photoUrls = [...existing, ...req.files.map(uploadedUrl)];
-    db.prepare('UPDATE meals SET photo_urls = ? WHERE id = ?').run(JSON.stringify(photoUrls), req.params.id);
-    res.json({ photo_urls: photoUrls });
+    // The meal may have changed or gone while the files uploaded: read it again
+    // and write in one transaction. A refused upload removes its files.
+    const outcome = db.transaction(() => {
+      const meal = mealRow.get(req.params.id);
+      if (!meal) return { missing: true };
+      const merged = mergeMealPhotos(JSON.parse(meal.photo_urls || '[]'), req.files.map(uploadedUrl), MAX_MEAL_PHOTOS);
+      if (merged.ok) setPhotos.run(JSON.stringify(merged.value), meal.id);
+      return merged;
+    })();
+    if (outcome.missing) {
+      removeUploaded(req.files);
+      return notFound(res);
+    }
+    if (!outcome.ok) {
+      removeUploaded(req.files);
+      return badRequest(res, outcome.error);
+    }
+    res.json({ photo_urls: outcome.value });
   });
 
   r.put('/:id', mayChange, (req, res) => {
     const patch = toMealPatch(req.body);
     if (!patch.ok) return res.status(400).json({ error: patch.error });
     const { fields, dishes } = patch.value;
-    if (!groupAllowed(fields.group_id, req.user.id)) return notAllowed(res);
+    if (!groupAllowed(fields.group_id ?? null, req.user.id)) return notAllowed(res);
     const columns = Object.keys(fields);
-    if (columns.length > 0) {
-      db.prepare(`UPDATE meals SET ${columns.map(c => `${c} = ?`).join(', ')} WHERE id = ?`)
-        .run(...Object.values(fields), req.params.id);
-    }
-    if (dishes) {
-      db.prepare('DELETE FROM meal_dishes WHERE meal_id = ?').run(req.params.id);
-      saveDishes(req.params.id, dishes);
-    }
+    db.transaction(() => {
+      if (columns.length > 0) {
+        db.prepare(`UPDATE meals SET ${columns.map(c => `${c} = ?`).join(', ')} WHERE id = ?`)
+          .run(...Object.values(fields), req.params.id);
+      }
+      if (dishes) {
+        db.prepare('DELETE FROM meal_dishes WHERE meal_id = ?').run(req.params.id);
+        saveDishes(req.params.id, dishes);
+      }
+    })();
     res.json(mealWithDishes(req.params.id));
     refreshProfile(req.user.id);
   });

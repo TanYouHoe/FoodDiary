@@ -3,9 +3,10 @@
 import { Router } from 'express';
 import { checkPlannedInput } from '../../logic/planned.js';
 import { canDeletePlanned } from '../../logic/access.js';
+import { parseGroupId } from '../../logic/accounts.js';
 import { priorityOrderSql } from '../sql.js';
 import { pick, PLANNED_FIELDS } from '../rows.js';
-import { guardRecord, notAllowed } from '../guards.js';
+import { guardRecord, refuseUnless, badRequest, notAllowed } from '../guards.js';
 
 const PLANNED_SELECT = `
   SELECT pv.*, r.name as restaurant_name, r.cuisine_type, r.price_range, r.address
@@ -18,16 +19,17 @@ const toPlanned = (row) => pick(row, PLANNED_FIELDS);
 export function plannedRoutes({ db, groupAllowed }) {
   const r = Router();
   const plannedRow = db.prepare('SELECT * FROM planned_visits WHERE id = ?');
-  const mayDelete = guardRecord((id) => plannedRow.get(id), canDeletePlanned);
+  const mayDelete = guardRecord((id) => plannedRow.get(id), refuseUnless(canDeletePlanned));
 
   r.get('/', (req, res) => {
-    const { group_id } = req.query;
-    if (!groupAllowed(group_id, req.user.id)) return notAllowed(res);
+    const group = parseGroupId(req.query.group_id);
+    if (!group.ok) return badRequest(res, group.error);
+    if (!groupAllowed(group.value, req.user.id)) return notAllowed(res);
     let sql = PLANNED_SELECT;
     const params = [];
-    if (group_id) {
+    if (group.value !== null) {
       sql += ' WHERE pv.group_id = ?';
-      params.push(Number(group_id));
+      params.push(group.value);
     } else {
       sql += ' WHERE pv.user_id = ? AND pv.group_id IS NULL';
       params.push(req.user.id);

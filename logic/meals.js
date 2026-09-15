@@ -1,5 +1,7 @@
 // Logic: the rules for creating and changing a meal, and for its photos.
 
+import { parseGroupId } from './accounts.js';
+
 export const PHOTO_TYPE = /^image\/(jpeg|png|webp)$/;
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 export const MAX_MEAL_PHOTOS = 10;
@@ -15,11 +17,13 @@ export function checkNewMeal(body) {
   if (!restaurant_id || !rating || !visited_at) {
     return { ok: false, error: 'Restaurant, rating, and visit date required' };
   }
+  const group = parseGroupId(group_id);
+  if (!group.ok) return group;
   return {
     ok: true,
     value: {
       restaurant_id,
-      group_id: group_id || null,
+      group_id: group.value,
       title: title || null,
       calories: calories || null,
       rating,
@@ -41,12 +45,24 @@ export function toMealPatch(body) {
   if (rating != null) fields.rating = rating;
   if (notes !== undefined) fields.notes = notes;
   if (visited_at !== undefined) fields.visited_at = visited_at;
-  if (group_id !== undefined) fields.group_id = group_id || null;
+  if (group_id !== undefined) {
+    const group = parseGroupId(group_id);
+    if (!group.ok) return group;
+    fields.group_id = group.value;
+  }
   const replaceDishes = Array.isArray(dishes);
   if (Object.keys(fields).length === 0 && !replaceDishes) {
     return { ok: false, error: 'Nothing to update' };
   }
   return { ok: true, value: { fields, dishes: replaceDishes ? dishes : null } };
+}
+
+// A stored meal's photo URLs plus newly uploaded ones. Refuses when the total
+// would pass the limit, so the caller can discard the new files.
+export function mergeMealPhotos(existing, added, max) {
+  const all = [...existing, ...added];
+  if (all.length > max) return { ok: false, error: `A meal can have at most ${max} photos` };
+  return { ok: true, value: all };
 }
 
 // Adds picked photos to a pending list, up to the per-meal limit.

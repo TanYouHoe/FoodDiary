@@ -2,17 +2,19 @@
 
 import { Router } from 'express';
 import { checkRestaurantInput } from '../../logic/restaurants.js';
-import { canChangeRestaurant } from '../../logic/access.js';
+import { canChangeRestaurant, canDeleteRestaurant, RESTAURANT_IN_USE } from '../../logic/access.js';
 import { pick, RESTAURANT_FIELDS } from '../rows.js';
 import { uploadedUrl } from '../uploads.js';
-import { guardRecord } from '../guards.js';
+import { guardRecord, refuseUnless, notFound } from '../guards.js';
 
 const toRestaurant = (row) => pick(row, RESTAURANT_FIELDS);
 
 export function restaurantRoutes({ db, upload }) {
   const r = Router();
   const getById = db.prepare('SELECT * FROM restaurants WHERE id = ?');
-  const mayChange = guardRecord((id) => getById.get(id), canChangeRestaurant);
+  const mayChange = guardRecord((id) => getById.get(id), refuseUnless(canChangeRestaurant));
+  const otherUsersMeals = db.prepare('SELECT COUNT(*) AS c FROM meals WHERE restaurant_id = ? AND user_id != ?');
+  const otherUsersPlanned = db.prepare('SELECT COUNT(*) AS c FROM planned_visits WHERE restaurant_id = ? AND user_id != ?');
 
   r.get('/', (req, res) => {
     const { cuisine, price_range, search } = req.query;
@@ -27,7 +29,7 @@ export function restaurantRoutes({ db, upload }) {
 
   r.get('/:id', (req, res) => {
     const row = getById.get(req.params.id);
-    if (!row) return res.status(404).json({ error: 'Not found' });
+    if (!row) return notFound(res);
     res.json(toRestaurant(row));
   });
 
@@ -57,8 +59,20 @@ export function restaurantRoutes({ db, upload }) {
     res.json(toRestaurant(getById.get(req.params.id)));
   });
 
+  // The delete cascades to meals and planned visits, so the usage count and
+  // the delete run in one transaction.
   r.delete('/:id', mayChange, (req, res) => {
-    db.prepare('DELETE FROM restaurants WHERE id = ?').run(req.params.id);
+    const { id } = req.record;
+    const deleted = db.transaction(() => {
+      const usage = {
+        otherUsersMeals: otherUsersMeals.get(id, req.user.id).c,
+        otherUsersPlanned: otherUsersPlanned.get(id, req.user.id).c,
+      };
+      if (!canDeleteRestaurant(req.user, req.record, usage)) return false;
+      db.prepare('DELETE FROM restaurants WHERE id = ?').run(id);
+      return true;
+    })();
+    if (!deleted) return res.status(409).json({ error: RESTAURANT_IN_USE });
     res.status(204).end();
   });
 

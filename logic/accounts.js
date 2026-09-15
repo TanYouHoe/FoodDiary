@@ -39,6 +39,17 @@ export function checkGroupName(body) {
   return { ok: true, value: { name: name.trim() } };
 }
 
+// A group id from a body, a query string or a path. No group (undefined, null
+// or '') is null; otherwise it must be a positive integer or its decimal string.
+export function parseGroupId(value) {
+  if (value === undefined || value === null || value === '') return { ok: true, value: null };
+  const id = typeof value === 'number' ? value
+    : (typeof value === 'string' && /^\d+$/.test(value)) ? Number(value)
+      : NaN;
+  if (!Number.isSafeInteger(id) || id < 1) return { ok: false, error: 'Invalid group' };
+  return { ok: true, value: id };
+}
+
 export function checkInviteCode(body) {
   const { invite_code } = body;
   if (!invite_code) return { ok: false, error: 'Invite code required' };

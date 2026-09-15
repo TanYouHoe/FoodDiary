@@ -2,9 +2,9 @@
 
 import { Router } from 'express';
 import crypto from 'node:crypto';
-import { checkGroupName, checkInviteCode, OWNER_ROLE, INVITE_CODE_BYTES } from '../../logic/accounts.js';
+import { checkGroupName, checkInviteCode, parseGroupId, OWNER_ROLE, INVITE_CODE_BYTES } from '../../logic/accounts.js';
 import { pick, GROUP_FIELDS, GROUP_MEMBER_FIELDS } from '../rows.js';
-import { notAllowed } from '../guards.js';
+import { badRequest, notAllowed } from '../guards.js';
 
 const newInviteCode = () => crypto.randomBytes(INVITE_CODE_BYTES).toString('hex');
 const toGroup = (row) => pick(row, GROUP_FIELDS);
@@ -35,14 +35,16 @@ export function groupRoutes({ db, groupAllowed }) {
   });
 
   r.get('/:id/members', (req, res) => {
-    if (!groupAllowed(req.params.id, req.user.id)) return notAllowed(res);
+    const group = parseGroupId(req.params.id);
+    if (!group.ok) return badRequest(res, group.error);
+    if (!groupAllowed(group.value, req.user.id)) return notAllowed(res);
     const rows = db.prepare(`
       SELECT u.id, u.name, u.email, u.avatar_url, gm.role, gm.joined_at
       FROM group_members gm
       JOIN users u ON u.id = gm.user_id
       WHERE gm.group_id = ?
       ORDER BY gm.joined_at
-    `).all(req.params.id);
+    `).all(group.value);
     res.json(rows.map(row => pick(row, GROUP_MEMBER_FIELDS)));
   });
 

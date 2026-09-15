@@ -312,6 +312,8 @@ describe('API', () => {
 
 // Ownership and access. Always runs on its own in-memory app, because it needs
 // the database handle to make the first user the owner and a fake Google verifier.
+// The tests share state (users, restaurant, meal, group) and run in order on
+// purpose: each one builds on what the one before it left behind.
 describe('API ownership and access', () => {
   let at;
   let app2;
@@ -415,6 +417,58 @@ describe('API ownership and access', () => {
     assert.equal((await uploadAs(`/meals/${meal.id}/photos`, 'photos', amy)).body.photo_urls.length, 1);
   });
 
+  it('meal photos: the limit holds and a refused upload leaves no file', async () => {
+    assert.equal((await upload(`/meals/${meal.id}/photos`, 'photos', 9, amy.token, at)).body.photo_urls.length, 10);
+    const before = uploadedFiles();
+    assert.deepEqual(await uploadAs(`/meals/${meal.id}/photos`, 'photos', amy), { status: 400, body: { error: 'A meal can have at most 10 photos' } });
+    assert.equal(uploadedFiles(), before);
+    const stored = db.prepare('SELECT photo_urls FROM meals WHERE id = ?').get(meal.id);
+    assert.equal(JSON.parse(stored.photo_urls).length, 10);
+  });
+
+  it('upload errors answer JSON 400 and leave no file', async () => {
+    const other = (await req('POST', '/meals', amy, { restaurant_id: restaurant.id, rating: 3, visited_at: '2026-09-01T19:00:00.000Z' })).body;
+    const before = uploadedFiles();
+    const tooMany = await upload(`/meals/${other.id}/photos`, 'photos', 11, amy.token, at);
+    assert.equal(tooMany.status, 400);
+    assert.equal(typeof tooMany.body.error, 'string');
+    assert.equal(uploadedFiles(), before);
+    assert.equal((await req('DELETE', `/meals/${other.id}`, amy)).status, 204);
+  });
+
+  it('a meal deleted while its photos upload answers 404 and leaves no file', async () => {
+    const doomed = (await req('POST', '/meals', amy, { restaurant_id: restaurant.id, rating: 3, visited_at: '2026-09-01T20:00:00.000Z' })).body;
+    const boundary = 'fooddiary-test-boundary';
+    const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="photos"; filename="late.png"\r\nContent-Type: image/png\r\n\r\n`);
+    const tail = Buffer.concat([PNG, Buffer.from(`\r\n--${boundary}--\r\n`)]);
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let step = 0;
+    const body = new ReadableStream({
+      async pull(controller) {
+        if (step++ === 0) { controller.enqueue(head); return; }
+        await gate;
+        controller.enqueue(tail);
+        controller.close();
+      },
+    });
+    const before = uploadedFiles();
+    const pending = fetch(`${at}/meals/${doomed.id}/photos`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${amy.token}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body,
+      duplex: 'half',
+    });
+    // The access guard has run once the headers arrive; delete the meal before the body ends.
+    await new Promise(resolve => setTimeout(resolve, 150));
+    db.prepare('DELETE FROM meals WHERE id = ?').run(doomed.id);
+    release();
+    const res = await pending;
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), NOT_FOUND);
+    assert.equal(uploadedFiles(), before);
+  });
+
   it('planned visits: only the planner may delete one', async () => {
     planned = (await req('POST', '/planned', amy, { restaurant_id: restaurant.id })).body;
     assert.deepEqual(await req('DELETE', `/planned/${planned.id}`, ben), { status: 403, body: NOT_ALLOWED });
@@ -472,6 +526,7 @@ describe('API ownership and access', () => {
     const reads = [`/meals?group_id=${g}`, `/planned?group_id=${g}`, `/suggest?group_id=${g}`, `/suggest?type=meal&group_id=${g}`, `/groups/${g}/members`];
 
     for (const path of reads) assert.deepEqual(await req('GET', path, ben), { status: 403, body: NOT_ALLOWED }, path);
+    for (const path of reads) assert.deepEqual(await req('GET', path, olive), { status: 403, body: NOT_ALLOWED }, `owner ${path}`);
     assert.deepEqual(
       await req('POST', '/meals', ben, { restaurant_id: restaurant.id, rating: 3, visited_at: '2026-09-02T12:00:00.000Z', group_id: g }),
       { status: 403, body: NOT_ALLOWED },
@@ -492,6 +547,45 @@ describe('API ownership and access', () => {
     assert.equal((await req('PUT', `/meals/${benMeal.id}`, ben, { group_id: g })).status, 200);
   });
 
+  it('group ids are parsed: anything but a positive integer is 400', async () => {
+    const g = group.id;
+    const INVALID = { error: 'Invalid group' };
+    const badQueries = ['abc', '0', '-1', 'true', `${g}&group_id=${g}`];
+    for (const base of ['/meals', '/planned', '/suggest', '/suggest?type=meal']) {
+      for (const q of badQueries) {
+        const path = `${base}${base.includes('?') ? '&' : '?'}group_id=${q}`;
+        assert.deepEqual(await req('GET', path, amy), { status: 400, body: INVALID }, path);
+      }
+    }
+    assert.deepEqual(await req('GET', '/groups/abc/members', amy), { status: 400, body: INVALID });
+
+    const newMeal = { restaurant_id: restaurant.id, rating: 3, visited_at: '2026-09-04T12:00:00.000Z' };
+    for (const group_id of [true, {}, [g, 7], 'abc', 0, -1]) {
+      assert.deepEqual(await req('POST', '/meals', amy, { ...newMeal, group_id }), { status: 400, body: INVALID }, JSON.stringify(group_id));
+      assert.deepEqual(await req('POST', '/planned', amy, { restaurant_id: restaurant.id, group_id }), { status: 400, body: INVALID });
+      assert.deepEqual(await req('PUT', `/meals/${meal.id}`, amy, { group_id }), { status: 400, body: INVALID });
+    }
+
+    const byString = await req('POST', '/meals', amy, { ...newMeal, group_id: String(g) });
+    assert.equal(byString.status, 201);
+    assert.equal(byString.body.group_id, g);
+    assert.equal((await req('GET', `/meals?group_id=${g}`, amy)).status, 200);
+    assert.equal((await req('DELETE', `/meals/${byString.body.id}`, amy)).status, 204);
+  });
+
+  it('restaurants other people use cannot be deleted by their adder', async () => {
+    // Ben logged a meal and Amy's group planned a visit at Amy's restaurant.
+    const benMeals = () => db.prepare('SELECT COUNT(*) AS c FROM meals WHERE restaurant_id = ? AND user_id = ?').get(restaurant.id, ben.id).c;
+    assert.ok(benMeals() > 0);
+    assert.deepEqual(await req('DELETE', `/restaurants/${restaurant.id}`, amy), { status: 409, body: { error: 'Restaurant is used by other people' } });
+    assert.ok(benMeals() > 0);
+    assert.equal((await req('GET', `/restaurants/${restaurant.id}`, amy)).status, 200);
+
+    const solo = (await req('POST', '/restaurants', amy, { name: 'Amy Only' })).body;
+    await req('POST', '/meals', amy, { restaurant_id: solo.id, rating: 4, visited_at: '2026-09-05T12:00:00.000Z' });
+    assert.equal((await req('DELETE', `/restaurants/${solo.id}`, amy)).status, 204);
+  });
+
   it('google sign-in of an existing user returns the adopted avatar', async () => {
     google.payload = { email: 'amy@own.test', name: 'Amy', picture: 'https://example.test/amy.png' };
     const r = await call('POST', '/auth/google', { at, body: { credential: 'fake' } });
@@ -501,8 +595,9 @@ describe('API ownership and access', () => {
     assert.equal((await req('GET', '/auth/me', amy)).body.avatar_url, 'https://example.test/amy.png');
   });
 
-  it('the allowed user can still delete', async () => {
+  it('the allowed user can still delete; the owner may delete a shared restaurant', async () => {
     assert.equal((await req('DELETE', `/meals/${meal.id}`, amy)).status, 204);
-    assert.equal((await req('DELETE', `/restaurants/${restaurant.id}`, amy)).status, 204);
+    assert.equal((await req('DELETE', `/restaurants/${restaurant.id}`, olive)).status, 204);
+    assert.equal((await req('GET', `/restaurants/${restaurant.id}`, amy)).status, 404);
   });
 });
