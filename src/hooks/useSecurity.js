@@ -1,17 +1,22 @@
 // UI connector: the Security tab state. Replace or set up the authenticator,
 // make new backup codes, sign out everywhere, and for the owner load users and
-// reset another user's factor. Returns the props of src/ui/SecurityTabView.jsx.
+// reset another user's factor (with the owner's own code or backup code).
+// Returns the props of src/ui/SecurityTabView.jsx.
 
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../AuthContext.jsx';
 import { useTotpSetup } from './useTotpSetup.js';
 import { useCopy } from './useCopy.js';
+import { needsFactorProof } from '../../logic/two-factor.js';
 import { SECURITY_MODES, toSecurityState, toUserRows, backupCodesText } from '../ui/two-factor.js';
+
+// { code } or { backupCode } from a field and its switch.
+const proofFrom = (value, useBackup) => (useBackup ? { backupCode: value } : { code: value });
 
 // enabled: the tab is open. showUsers: the user may list users (logic/access.js).
 export function useSecurity({ enabled, showUsers }) {
-  const { user, signIn, logout } = useAuth();
+  const { user, logout } = useAuth();
   const totp = useTotpSetup();
   const copy = useCopy();
   const [mode, setMode] = useState(SECURITY_MODES.idle);
@@ -23,6 +28,10 @@ export function useSecurity({ enabled, showUsers }) {
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [confirmResetId, setConfirmResetId] = useState(null);
+  const [resetCode, setResetCode] = useState('');
+  const [resetUseBackup, setResetUseBackup] = useState(false);
+
+  const factorEnabled = Boolean(user.totp_enabled);
 
   const run = async (action) => {
     setBusy(true);
@@ -65,7 +74,9 @@ export function useSecurity({ enabled, showUsers }) {
   };
 
   const cancel = () => {
-    totp.clear();
+    // A setup on screen has a pending secret on the server; forget it there too.
+    if (mode === SECURITY_MODES.setup) totp.cancel().catch(() => {});
+    else totp.clear();
     setCurrentCode('');
     setUseBackup(false);
     setError('');
@@ -74,7 +85,7 @@ export function useSecurity({ enabled, showUsers }) {
 
   const replace = () => {
     setError('');
-    if (user.totp_enabled) {
+    if (factorEnabled) {
       askCurrentCode(SECURITY_MODES.replaceCode);
     } else {
       run(async () => { await totp.start(); setMode(SECURITY_MODES.setup); });
@@ -82,7 +93,7 @@ export function useSecurity({ enabled, showUsers }) {
   };
 
   const submitCurrentCode = () => run(async () => {
-    const proof = useBackup ? { backupCode: currentCode } : { code: currentCode };
+    const proof = proofFrom(currentCode, useBackup);
     if (mode === SECURITY_MODES.replaceCode) {
       await totp.start(proof);
       setMode(SECURITY_MODES.setup);
@@ -93,10 +104,9 @@ export function useSecurity({ enabled, showUsers }) {
     setUseBackup(false);
   });
 
-  // The popup stays open, so the new session is adopted at once.
+  // useTotpSetup adopts the new session; the popup stays open for the codes.
   const confirmSetup = () => run(async () => {
     const result = await totp.confirm();
-    signIn(result);
     showCodes(result.backupCodes);
   });
 
@@ -105,9 +115,17 @@ export function useSecurity({ enabled, showUsers }) {
     logout();
   });
 
+  const askReset = (id) => {
+    setError('');
+    setResetCode('');
+    setResetUseBackup(false);
+    setConfirmResetId(id);
+  };
+
   const reset = (id) => run(async () => {
-    await api.resetUserTotp(id);
+    await api.resetUserTotp(id, needsFactorProof({ totpEnabled: factorEnabled }) ? proofFrom(resetCode, resetUseBackup) : undefined);
     setConfirmResetId(null);
+    setResetCode('');
     await loadUsers();
   });
 
@@ -139,6 +157,9 @@ export function useSecurity({ enabled, showUsers }) {
     userRows: toUserRows(users, user),
     usersLoading,
     confirmResetId,
+    resetNeedsProof: needsFactorProof({ totpEnabled: factorEnabled }),
+    resetCode,
+    resetUseBackup,
     onReplace: replace,
     onRegenerate: () => askCurrentCode(SECURITY_MODES.regenerateCode),
     onCurrentCode: setCurrentCode,
@@ -146,8 +167,10 @@ export function useSecurity({ enabled, showUsers }) {
     onSubmitCurrentCode: submitCurrentCode,
     onCancel: cancel,
     onLogoutAll: logoutAll,
-    onAskReset: setConfirmResetId,
+    onAskReset: askReset,
     onCancelReset: () => setConfirmResetId(null),
+    onResetCode: setResetCode,
+    onToggleResetBackup: () => { setResetCode(''); setResetUseBackup(b => !b); },
     onReset: reset,
   };
 }

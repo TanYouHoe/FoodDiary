@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  needsEnrollment, enrollStage, toSecurityState, toUserRows, backupCodesText, currentCodePrompt, SECURITY_MODES,
+  needsEnrollment, enrollStage, toSecurityState, toUserRows, backupCodesText, currentCodePrompt, resetCodePrompt, SECURITY_MODES,
 } from '../../src/ui/two-factor.js';
 import { settingsTabs, SECURITY_TAB, INVITES_TAB } from '../../src/ui/settings.js';
 import { totpResetRefusal } from '../../logic/access.js';
@@ -13,6 +13,10 @@ describe('needsEnrollment', () => {
     assert.equal(needsEnrollment({ user: { totp_enabled: false, totp_required: false }, enrollRequired: true }), true);
     assert.equal(needsEnrollment({ user: { totp_enabled: false, totp_required: false }, enrollRequired: false }), false);
     assert.equal(needsEnrollment({ user: { totp_enabled: true, totp_required: true }, enrollRequired: true }), false);
+  });
+  it('stays while held for the backup codes, even with the new factor on', () => {
+    assert.equal(needsEnrollment({ user: { totp_enabled: true, totp_required: true }, enrollRequired: false, held: true }), true);
+    assert.equal(needsEnrollment({ user: null, enrollRequired: false, held: true }), false);
   });
 });
 
@@ -62,6 +66,11 @@ describe('backup codes and prompts', () => {
     assert.match(currentCodePrompt(SECURITY_MODES.replaceCode), /replace/);
     assert.match(currentCodePrompt(SECURITY_MODES.regenerateCode), /backup codes/);
     assert.equal(currentCodePrompt(SECURITY_MODES.idle), null);
+  });
+  it('says when a backup code is used up: at confirm for a replace', () => {
+    assert.match(currentCodePrompt(SECURITY_MODES.replaceCode, true), /used up when you confirm/);
+    assert.match(resetCodePrompt(false), /own current code/);
+    assert.match(resetCodePrompt(true), /own backup codes/);
   });
   it('asks for a backup code instead when the user switches', () => {
     assert.match(currentCodePrompt(SECURITY_MODES.replaceCode, true), /backup code.*replace/);

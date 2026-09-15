@@ -15,6 +15,11 @@ export function onEnrollRequired(listener) {
   return () => enrollListeners.delete(listener);
 }
 
+// body: a parsed response body. Tells the listeners when it asks for setup.
+function notifyIfEnrollRequired(body) {
+  if (body?.code === MFA_ENROLL_REQUIRED.code) enrollListeners.forEach(listener => listener());
+}
+
 // Every request names the browser's IANA time zone, so the server reads meal
 // periods and weekdays where the user is.
 function commonHeaders() {
@@ -33,7 +38,7 @@ async function request(url, options = {}) {
   if (res.status === 204) return null;
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: 'Request failed' }));
-    if (body.code === MFA_ENROLL_REQUIRED.code) enrollListeners.forEach(listener => listener());
+    notifyIfEnrollRequired(body);
     const err = new Error(body.error);
     err.status = res.status;
     err.code = body.code;
@@ -56,7 +61,11 @@ function uploadForm(url, form) {
     method: 'POST',
     headers: commonHeaders(),
     body: form,
-  }).then(r => r.json());
+  }).then(async (r) => {
+    const body = await r.json();
+    notifyIfEnrollRequired(body);
+    return body;
+  });
 }
 
 // A meal's photo list travels as a JSON string.
@@ -87,6 +96,7 @@ export const api = {
     const body = await send('POST', `${API}/auth/totp/setup`, factorBody(proof));
     return { secret: body.secret, otpauthUrl: body.otpauth_url };
   },
+  cancelTotpSetup: () => request(`${API}/auth/totp/cancel`, { method: 'POST' }),
   enableTotp: async (code) => {
     const body = await send('POST', `${API}/auth/totp/enable`, { code });
     return { backupCodes: body.backup_codes, token: body.token, user: body.user };
@@ -96,7 +106,8 @@ export const api = {
 
   // Users (owner)
   getUsers: () => request(`${API}/users`),
-  resetUserTotp: (id) => request(`${API}/users/${id}/totp/reset`, { method: 'POST' }),
+  // proof: the owner's own { code } or { backupCode }.
+  resetUserTotp: (id, proof) => send('POST', `${API}/users/${id}/totp/reset`, factorBody(proof)),
 
   // Account invites (sign-up links; not group invite codes)
   checkAccountInvite: (code) => send('POST', `${API}/invites/check`, { code }),

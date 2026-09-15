@@ -6,8 +6,10 @@ import { totpResetRefusal } from '../../logic/access.js';
 
 // user: the signed-in user ({ totp_enabled, totp_required }) or null.
 // enrollRequired: the API answered MFA_ENROLL_REQUIRED during this session.
-export function needsEnrollment({ user, enrollRequired }) {
-  return Boolean(user) && !user.totp_enabled && Boolean(user.totp_required || enrollRequired);
+// held: the setup screen still shows the new backup codes.
+export function needsEnrollment({ user, enrollRequired, held = false }) {
+  if (!user) return false;
+  return held || (!user.totp_enabled && Boolean(user.totp_required || enrollRequired));
 }
 
 // Returns 'loading' | 'error' | 'scan' | 'codes'.
@@ -50,10 +52,21 @@ export const SECURITY_MODES = {
 };
 
 // The prompt above the current-code field, or null when no code is asked for.
-// useBackup: the field takes a backup code (it is spent) instead of a current code.
+// useBackup: the field takes a backup code instead of a current code.
 export function currentCodePrompt(mode, useBackup = false) {
-  const proof = useBackup ? 'one of your backup codes (it is used up)' : 'a current code from your authenticator app';
-  if (mode === SECURITY_MODES.replaceCode) return `Enter ${proof} to replace the authenticator.`;
-  if (mode === SECURITY_MODES.regenerateCode) return `Enter ${proof} to make new backup codes. The old backup codes stop working.`;
+  const code = 'a current code from your authenticator app';
+  if (mode === SECURITY_MODES.replaceCode) {
+    const proof = useBackup ? 'one of your backup codes (it is used up when you confirm the new app)' : code;
+    return `Enter ${proof} to replace the authenticator.`;
+  }
+  if (mode === SECURITY_MODES.regenerateCode) {
+    const proof = useBackup ? 'one of your backup codes (it is used up)' : code;
+    return `Enter ${proof} to make new backup codes. The old backup codes stop working.`;
+  }
   return null;
+}
+
+// The label of the owner's own proof before resetting another user's factor.
+export function resetCodePrompt(useBackup = false) {
+  return useBackup ? 'One of your own backup codes (it is used up)' : 'Your own current code';
 }

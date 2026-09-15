@@ -1,6 +1,7 @@
 // UI connector: the signed-in user, shared through React context. Also holds
 // the pending second-factor step (its mfa token lives in memory only, never in
-// browser storage) and whether the API has asked for authenticator setup.
+// browser storage), whether the API has asked for authenticator setup, and the
+// one place a new session token is adopted.
 
 import { createContext, useContext, useState, useEffect } from 'react';
 import { api, onEnrollRequired } from './api';
@@ -14,6 +15,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [mfaToken, setMfaToken] = useState(null);
   const [enrollRequired, setEnrollRequired] = useState(false);
+  const [enrollHeld, setEnrollHeld] = useState(false);
 
   useEffect(() => {
     if (getToken()) {
@@ -25,13 +27,22 @@ export function AuthProvider({ children }) {
 
   useEffect(() => onEnrollRequired(() => setEnrollRequired(true)), []);
 
-  // result: { token, user }.
-  const signIn = ({ token, user: signedIn }) => {
+  // The one place a new session is adopted: stores the token and updates the
+  // user. session: { token, user }. Used by sign-in and by factor changes.
+  const adoptSession = ({ token, user: next }) => {
     setToken(token);
-    setUser(signedIn);
+    setUser(next);
+  };
+
+  const signIn = (session) => {
+    adoptSession(session);
     setMfaToken(null);
     setEnrollRequired(false);
   };
+
+  // held: keep the setup screen up while the new backup codes are shown, even
+  // though the adopted user already has a factor.
+  const holdEnrollment = (held) => setEnrollHeld(held);
 
   // result: { token, user } or { mfa_required, mfa_token }.
   const afterFirstFactor = (result) => {
@@ -58,6 +69,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     setMfaToken(null);
     setEnrollRequired(false);
+    setEnrollHeld(false);
   };
 
   return (
@@ -65,8 +77,8 @@ export function AuthProvider({ children }) {
       user,
       loading,
       mfaPending: Boolean(mfaToken),
-      needsEnrollment: needsEnrollment({ user, enrollRequired }),
-      login, register, googleLogin, verifyMfa, cancelMfa, signIn, logout,
+      needsEnrollment: needsEnrollment({ user, enrollRequired, held: enrollHeld }),
+      login, register, googleLogin, verifyMfa, cancelMfa, signIn, adoptSession, holdEnrollment, logout,
     }}>
       {children}
     </AuthContext.Provider>

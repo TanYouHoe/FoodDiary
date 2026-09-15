@@ -1,13 +1,14 @@
-// UI connector: one authenticator setup. Asks the server for a new secret,
-// draws its QR code, holds the confirm-code field and confirms. The caller
-// handles errors (each call throws) and decides when to adopt the new session.
+// UI connector: one authenticator setup. Asks the server for a secret, draws
+// its QR code, holds the confirm-code field, confirms and cancels. Each call
+// throws on failure; the caller shows the error.
 
 import { useState } from 'react';
 import { api } from '../api.js';
-import { setToken } from '../token-store.js';
+import { useAuth } from '../AuthContext.jsx';
 import { useQrCode } from './useQrCode.js';
 
 export function useTotpSetup() {
+  const { adoptSession } = useAuth();
   const [setup, setSetup] = useState(null); // { secret, otpauthUrl }
   const [code, setCode] = useState('');
   const qrDataUrl = useQrCode(setup?.otpauthUrl);
@@ -18,11 +19,11 @@ export function useTotpSetup() {
     setCode('');
   };
 
-  // Returns { backupCodes, token, user }. The new token is stored at once: the
-  // server has already ended the old one.
+  // Returns { backupCodes, token, user }. The new session is adopted at once:
+  // the server has already ended the old token.
   const confirm = async () => {
     const result = await api.enableTotp(code);
-    setToken(result.token);
+    adoptSession(result);
     setSetup(null);
     setCode('');
     return result;
@@ -33,5 +34,11 @@ export function useTotpSetup() {
     setCode('');
   };
 
-  return { setup, code, setCode, qrDataUrl, start, confirm, clear };
+  // Forgets the pending secret here and on the server.
+  const cancel = async () => {
+    clear();
+    await api.cancelTotpSetup();
+  };
+
+  return { setup, code, setCode, qrDataUrl, start, confirm, clear, cancel };
 }

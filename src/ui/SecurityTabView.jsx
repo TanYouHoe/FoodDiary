@@ -6,11 +6,13 @@
 
 import TotpSetupPanel from './TotpSetupPanel.jsx';
 import BackupCodesPanel from './BackupCodesPanel.jsx';
-import { SECURITY_MODES, currentCodePrompt } from './two-factor.js';
+import { SECURITY_MODES, currentCodePrompt, resetCodePrompt } from './two-factor.js';
 
 export default function SecurityTabView({
   state, mode, currentCode, useBackup, error, busy, setup, backup, showUsers, userRows, usersLoading, confirmResetId,
-  onReplace, onRegenerate, onCurrentCode, onToggleBackup, onSubmitCurrentCode, onCancel, onLogoutAll, onAskReset, onCancelReset, onReset,
+  resetNeedsProof, resetCode, resetUseBackup,
+  onReplace, onRegenerate, onCurrentCode, onToggleBackup, onSubmitCurrentCode, onCancel, onLogoutAll,
+  onAskReset, onCancelReset, onResetCode, onToggleResetBackup, onReset,
 }) {
   const prompt = currentCodePrompt(mode, useBackup);
   return (
@@ -109,11 +111,30 @@ export default function SecurityTabView({
                       </div>
                     )}
                     {confirmResetId === row.id && row.canReset && (
-                      <div className="settings-item-confirm">
+                      <form className="settings-item-confirm" onSubmit={(e) => { e.preventDefault(); onReset(row.id); }}>
                         <span>Reset? {row.name} must set up an authenticator again, and every session of theirs ends.</span>
+                        {resetNeedsProof && (
+                          <>
+                            <label htmlFor={`reset-proof-${row.id}`}>{resetCodePrompt(resetUseBackup)}</label>
+                            {resetUseBackup ? (
+                              <input
+                                key="backup" id={`reset-proof-${row.id}`} type="text" autoComplete="off" autoCapitalize="none" spellCheck={false}
+                                value={resetCode} onChange={(e) => onResetCode(e.target.value)} required placeholder="xxxx-xxxx" autoFocus
+                              />
+                            ) : (
+                              <input
+                                key="code" id={`reset-proof-${row.id}`} type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={7}
+                                value={resetCode} onChange={(e) => onResetCode(e.target.value)} required placeholder="123456" autoFocus
+                              />
+                            )}
+                            <button type="button" className="link-btn" onClick={onToggleResetBackup}>
+                              {resetUseBackup ? 'Use the authenticator app' : 'Use a backup code'}
+                            </button>
+                          </>
+                        )}
                         <button type="button" className="btn-secondary btn-sm" onClick={onCancelReset}>No</button>
-                        <button type="button" className="btn-danger btn-sm" onClick={() => onReset(row.id)}>Yes</button>
-                      </div>
+                        <button type="submit" className="btn-danger btn-sm" disabled={busy}>Yes</button>
+                      </form>
                     )}
                   </div>
                 ))}

@@ -1,5 +1,6 @@
-// UI connector: the required setup screen. Starts a setup once, confirms the
-// first code, shows the backup codes, and adopts the new session on "I saved them".
+// UI connector: the required setup screen. Starts a setup once (a reload gets
+// the same pending secret back), confirms the first code, and keeps the screen
+// up while the backup codes are shown; "I saved them" lets the app open.
 
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../AuthContext';
@@ -9,7 +10,7 @@ import { enrollStage, backupCodesText } from '../ui/two-factor.js';
 import EnrollView from '../ui/EnrollView.jsx';
 
 export default function Enroll() {
-  const { signIn, logout } = useAuth();
+  const { holdEnrollment, logout } = useAuth();
   const totp = useTotpSetup();
   const copy = useCopy();
   const [error, setError] = useState('');
@@ -26,7 +27,6 @@ export default function Enroll() {
     }
   };
 
-  // One setup per visit: a second request would replace the secret on screen.
   useEffect(() => {
     if (started.current) return;
     started.current = true;
@@ -36,9 +36,12 @@ export default function Enroll() {
   const confirm = async () => {
     setBusy(true);
     setError('');
+    // Held before the new session is adopted, so the codes stay on screen.
+    holdEnrollment(true);
     try {
       setResult(await totp.confirm());
     } catch (err) {
+      holdEnrollment(false);
       setError(err.message || 'Could not confirm the code');
     } finally {
       setBusy(false);
@@ -64,7 +67,7 @@ export default function Enroll() {
         copied: copy.copied,
         copyError: copy.error,
         onCopy: () => copy.copy(backupCodesText(result.backupCodes)),
-        onDone: () => signIn(result),
+        onDone: () => holdEnrollment(false),
       }}
       onRetry={begin}
       onLogout={logout}
