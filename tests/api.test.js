@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
+import { callApi } from './helpers/http.js';
 
 let base = process.env.FOOD_DIARY_TEST_BASE ? `${process.env.FOOD_DIARY_TEST_BASE}/api` : null;
 let server = null;
@@ -20,20 +21,7 @@ const PNG = Buffer.from(
 );
 
 // at: the API base URL; defaults to the shared server.
-async function call(method, path, { body, token, at = base, headers: extra = {} } = {}) {
-  const headers = { ...extra };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${at}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  let parsed = null;
-  try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
-  return { status: res.status, body: parsed };
-}
+const call = (method, path, { at = base, ...options } = {}) => callApi(`${at}${path}`, method, options);
 
 async function upload(path, field, count, token, at = base) {
   const form = new FormData();
@@ -48,7 +36,7 @@ before(async () => {
   const { openDatabase } = await import('../server/db.js');
   const { createApp } = await import('../server/app.js');
   const db = openDatabase(':memory:');
-  const { app } = createApp({ db, uploadsDir: tmp, jwtSecret: 'test-secret' });
+  const { app } = createApp({ db, uploadsDir: tmp, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur' });
   await new Promise(resolve => { server = app.listen(0, resolve); });
   base = `http://127.0.0.1:${server.address().port}/api`;
 });
@@ -389,7 +377,7 @@ describe('API ownership and access', () => {
     const { createApp } = await import('../server/app.js');
     db = openDatabase(':memory:');
     const { app } = createApp({
-      db, uploadsDir: dir, jwtSecret: 'test-secret', verifyGoogle: async () => google.payload,
+      db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur', verifyGoogle: async () => google.payload,
     });
     await new Promise(resolve => { app2 = app.listen(0, resolve); });
     at = `http://127.0.0.1:${app2.address().port}/api`;
@@ -676,90 +664,3 @@ describe('API ownership and access', () => {
   });
 });
 
-// Time zones. Its own app, so the default zone is fixed and the database is
-// reachable. The tests share one user and run in order.
-describe('API time zones', () => {
-  let at;
-  let app3;
-  let db;
-  let dir;
-  let user;
-  let place;
-
-  // Saturday 20:30 UTC is Sunday 04:30 in Kuala Lumpur.
-  const SAT_EVENING_UTC = '2026-03-28T20:30:00.000Z';
-  const slots = async (headers) => (await call('GET', '/profile', { token: user.token, at, headers })).body
-    .map(r => `${r.day_of_week}|${r.meal_period}`);
-  const me = async (headers) => (await call('GET', '/auth/me', { token: user.token, at, headers })).body;
-
-  before(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'fooddiary-tz-'));
-    const { openDatabase } = await import('../server/db.js');
-    const { createApp } = await import('../server/app.js');
-    db = openDatabase(':memory:');
-    const { app } = createApp({
-      db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur',
-      now: () => new Date(SAT_EVENING_UTC), rng: () => 0.99,
-    });
-    await new Promise(resolve => { app3 = app.listen(0, resolve); });
-    at = `http://127.0.0.1:${app3.address().port}/api`;
-    const reg = await call('POST', '/auth/register', { at, body: { name: 'Zoe', email: 'zoe@tz.test', password: 'pw' } });
-    user = { ...reg.body.user, token: reg.body.token };
-    place = (await call('POST', '/restaurants', { at, token: user.token, body: { name: 'Night Stall' } })).body;
-  });
-
-  after(async () => {
-    if (app3) await new Promise(resolve => app3.close(resolve));
-    if (db) db.close();
-    if (dir) rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('a user with no stored zone gets the default zone', async () => {
-    assert.equal(user.timezone, null);
-    const r = await call('POST', '/meals', { at, token: user.token, body: { restaurant_id: place.id, rating: 4, visited_at: SAT_EVENING_UTC } });
-    assert.equal(r.status, 201);
-    assert.deepEqual(await slots(), ['0|breakfast']);
-  });
-
-  it('an invalid header is ignored', async () => {
-    assert.equal((await me({ 'X-Time-Zone': 'Mars/Olympus' })).timezone, null);
-    assert.deepEqual(await slots({ 'X-Time-Zone': 'Mars/Olympus' }), ['0|breakfast']);
-  });
-
-  it('a valid new header is stored on the user and rebuilds the profile', async () => {
-    assert.equal((await me({ 'X-Time-Zone': 'UTC' })).timezone, 'UTC');
-    assert.equal((await me()).timezone, 'UTC');
-    assert.deepEqual(await slots(), ['6|dinner']);
-  });
-
-  it('later rebuilds use the stored zone', async () => {
-    // Sunday 04:30 UTC: breakfast in UTC, lunch in Kuala Lumpur.
-    const r = await call('POST', '/meals', { at, token: user.token, body: { restaurant_id: place.id, rating: 4, visited_at: '2026-03-29T04:30:00.000Z' } });
-    assert.equal(r.status, 201);
-    assert.deepEqual((await slots()).sort(), ['0|breakfast', '6|dinner']);
-  });
-
-  it('suggestions read the day and period of now in the request zone', async () => {
-    // The app's now is Saturday 20:30 UTC = Sunday 04:30 (breakfast) in KL.
-    // Yuki's one meal, Sunday 02:00 UTC = Sunday 10:00 KL, is in the KL slot
-    // of now (Sunday breakfast) and not in the UTC slot (Saturday dinner).
-    const reg = await call('POST', '/auth/register', { at, body: { name: 'Yuki', email: 'yuki@tz.test', password: 'pw' } });
-    const yuki = reg.body.token;
-    const cafe = (await call('POST', '/restaurants', { at, token: yuki, body: { name: 'Morning Cafe' } })).body;
-    await call('POST', '/meals', { at, token: yuki, body: { restaurant_id: cafe.id, rating: 5, visited_at: '2026-03-22T02:00:00.000Z' } });
-
-    const suggest = async (path, zone) => {
-      const r = await call('GET', path, { at, token: yuki, headers: { 'X-Time-Zone': zone } });
-      assert.equal(r.status, 200);
-      return r.body;
-    };
-    const familiar = (list) => list.filter(s => s.suggestion_type === 'familiar').map(s => s.name);
-    assert.deepEqual(familiar(await suggest('/suggest?type=meal', 'Asia/Kuala_Lumpur')), ['Morning Cafe']);
-    assert.deepEqual(familiar(await suggest('/suggest?type=meal', 'UTC')), []);
-
-    // The scorer counts whole days from today: 2026-03-29 in KL, 2026-03-28 in UTC.
-    const recency = (list) => list.find(s => s.id === cafe.id).scores.recency;
-    assert.equal(recency(await suggest('/suggest', 'Asia/Kuala_Lumpur')), 6 / 30);
-    assert.equal(recency(await suggest('/suggest', 'UTC')), 5 / 30);
-  });
-});

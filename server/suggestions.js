@@ -9,6 +9,7 @@ import {
   mergeByPriority, tagAsNew, assembleMealSuggestions, needsTopUp, topUpSuggestions,
   RECENT_CUISINE_COUNT,
 } from '../logic/suggest.js';
+import { getCalendarDate } from '../logic/meal-period.js';
 import { findProfile } from './profile-store.js';
 import { priorityOrderSql } from './sql.js';
 import { pick, RESTAURANT_FIELDS } from './rows.js';
@@ -80,7 +81,7 @@ export function getSuggestions(db, { userId, groupId, cuisine, priceRange, now, 
   return rankRestaurants(candidates, {
     recentCuisines,
     maxVisitCount: maxRow?.max_count || 0,
-    today: mealContext(now, timeZone).today,
+    today: getCalendarDate(now, timeZone),
     now: now.getTime(),
   });
 }

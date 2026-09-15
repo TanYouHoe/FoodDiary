@@ -12,11 +12,25 @@ export const isAcceptedPhotoType = (mimeType) => PHOTO_TYPE.test(mimeType);
 // A wider budget on the client, so it never refuses a file the server takes.
 export const isImageFile = (file) => file.type.startsWith('image/');
 
+// A visit time is an instant: it must parse and name its zone ('Z' or ±HH:MM),
+// or its meal period would depend on the machine that reads it.
+const ENDS_WITH_ZONE = /(Z|[+-]\d{2}:\d{2})$/i;
+
+export function checkVisitTime(visitedAt) {
+  if (typeof visitedAt !== 'string' || Number.isNaN(Date.parse(visitedAt))) {
+    return { ok: false, error: 'Invalid visit time' };
+  }
+  if (!ENDS_WITH_ZONE.test(visitedAt)) return { ok: false, error: 'Visit time must include a time zone' };
+  return { ok: true, value: visitedAt };
+}
+
 export function checkNewMeal(body) {
   const { restaurant_id, group_id, title, calories, dishes, rating, notes, visited_at } = body;
   if (!restaurant_id || !rating || !visited_at) {
     return { ok: false, error: 'Restaurant, rating, and visit date required' };
   }
+  const visit = checkVisitTime(visited_at);
+  if (!visit.ok) return visit;
   const group = parseGroupId(group_id);
   if (!group.ok) return group;
   return {
@@ -44,7 +58,11 @@ export function toMealPatch(body) {
   if (calories !== undefined) fields.calories = calories || null;
   if (rating != null) fields.rating = rating;
   if (notes !== undefined) fields.notes = notes;
-  if (visited_at !== undefined) fields.visited_at = visited_at;
+  if (visited_at !== undefined) {
+    const visit = checkVisitTime(visited_at);
+    if (!visit.ok) return visit;
+    fields.visited_at = visit.value;
+  }
   if (group_id !== undefined) {
     const group = parseGroupId(group_id);
     if (!group.ok) return group;

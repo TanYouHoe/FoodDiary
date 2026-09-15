@@ -9,8 +9,7 @@ import { makeTokens, makeAuthenticate, verifyGoogleCredential } from './auth.js'
 import { makeUpload, isUploadError } from './uploads.js';
 import { makeGroupAccess } from './guards.js';
 import { rebuildProfile } from './profile-store.js';
-import { resolveTimeZone } from '../logic/meal-period.js';
-import { DEFAULT_TIME_ZONE } from '../logic/config.js';
+import { resolveTimeZone, isValidTimeZone } from '../logic/meal-period.js';
 import { authRoutes } from './routes/auth.js';
 import { restaurantRoutes } from './routes/restaurants.js';
 import { mealTypeRoutes, dishTypeRoutes } from './routes/catalog.js';
@@ -29,8 +28,9 @@ export function createApp({
   now = () => new Date(),
   rng = Math.random,
   log = () => {},
-  defaultTimeZone = DEFAULT_TIME_ZONE,
+  defaultTimeZone,
 }) {
+  if (!isValidTimeZone(defaultTimeZone)) throw new Error(`createApp: defaultTimeZone must be an IANA time zone, got ${defaultTimeZone}`);
   const tokens = makeTokens(jwtSecret);
   const upload = makeUpload(uploadsDir);
   const groupAllowed = makeGroupAccess(db);
@@ -44,7 +44,7 @@ export function createApp({
       rebuildProfile(db, userId, timeZone);
     } catch (err) { log(`[profile] rebuild failed for user ${userId}: ${err.message}`); }
   };
-  const authenticate = makeAuthenticate({ db, tokens, defaultTimeZone, onTimeZoneChange: refreshProfile });
+  const authenticate = makeAuthenticate({ db, tokens, defaultTimeZone, now, onTimeZoneChange: refreshProfile });
 
   const app = express();
   app.use(cors());

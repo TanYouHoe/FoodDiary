@@ -130,6 +130,7 @@ const ADDED_COLUMNS = [
   ['meal_types', 'created_by', 'INTEGER REFERENCES users(id)'],
   ['dish_types', 'created_by', 'INTEGER REFERENCES users(id)'],
   ['users', 'timezone', 'TEXT'],
+  ['users', 'timezone_updated_at', 'TEXT'],
 ];
 
 function migrate(db) {

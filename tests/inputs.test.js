@@ -32,6 +32,23 @@ describe('group ids in meal and planned input', () => {
     assert.equal(checkNewMeal(meal).value.group_id, null);
     for (const group_id of BAD_GROUP_IDS) assert.deepEqual(checkNewMeal({ ...meal, group_id }), INVALID_GROUP);
   });
+  it('a visit time must be a readable timestamp with a time zone', () => {
+    const NO_ZONE = { ok: false, error: 'Visit time must include a time zone' };
+    const INVALID = { ok: false, error: 'Invalid visit time' };
+    for (const visited_at of ['2026-09-01T12:00:00.000Z', '2026-09-01T12:00:00Z', '2026-09-01T20:00:00+08:00', '2026-09-01T07:00:00-05:00']) {
+      assert.equal(checkNewMeal({ ...meal, visited_at }).value.visited_at, visited_at);
+      assert.equal(toMealPatch({ visited_at }).value.fields.visited_at, visited_at);
+    }
+    for (const visited_at of ['2026-09-01T12:00:00', '2026-09-01', '2026-09-01 12:00']) {
+      assert.deepEqual(checkNewMeal({ ...meal, visited_at }), NO_ZONE, visited_at);
+      assert.deepEqual(toMealPatch({ visited_at }), NO_ZONE, visited_at);
+    }
+    for (const visited_at of ['garbage', 'not a dateZ', '2026-13-45T99:00:00Z', 12345, {}]) {
+      assert.deepEqual(checkNewMeal({ ...meal, visited_at }), INVALID, String(visited_at));
+      assert.deepEqual(toMealPatch({ visited_at }), INVALID, String(visited_at));
+    }
+  });
+
   it('toMealPatch parses the group only when the body names one', () => {
     assert.equal('group_id' in toMealPatch({ rating: 3 }).value.fields, false);
     assert.equal(toMealPatch({ group_id: null }).value.fields.group_id, null);

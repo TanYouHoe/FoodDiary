@@ -1,10 +1,13 @@
 // Connector: bearer tokens, the authenticate middleware, and Google ID token
-// verification. Session length is logic/accounts.js; which time zone wins is
-// logic/meal-period.js.
+// verification. Session length is logic/accounts.js; which time zone wins and
+// when a new one is stored is logic/meal-period.js.
+//
+// Note: authenticate can write the user's stored time zone on any
+// authenticated request, from the X-Time-Zone header.
 
 import jwt from 'jsonwebtoken';
 import { TOKEN_TTL } from '../logic/accounts.js';
-import { resolveTimeZone, shouldStoreTimeZone } from '../logic/meal-period.js';
+import { canonicalTimeZone, resolveTimeZone, shouldStoreTimeZone } from '../logic/meal-period.js';
 import { pick, USER_FIELDS } from './rows.js';
 
 export function makeTokens(secret) {
@@ -15,11 +18,13 @@ export function makeTokens(secret) {
 }
 
 // Sets req.user and req.timeZone, or answers 401.
-// The browser names its zone in X-Time-Zone. A new zone is stored on the user,
-// then onTimeZoneChange(userId) runs so derived data can follow it.
-export function makeAuthenticate({ db, tokens, defaultTimeZone, onTimeZoneChange }) {
-  const findUser = db.prepare('SELECT id, name, email, avatar_url, role, timezone, created_at FROM users WHERE id = ?');
-  const setTimeZone = db.prepare('UPDATE users SET timezone = ? WHERE id = ?');
+// The browser names its zone in X-Time-Zone; the current request is read in it.
+// When logic says so, the zone is stored on the user, and onTimeZoneChange(userId)
+// runs after the response so derived data can follow it.
+// now: () => Date.
+export function makeAuthenticate({ db, tokens, defaultTimeZone, now, onTimeZoneChange }) {
+  const findUser = db.prepare('SELECT id, name, email, avatar_url, role, timezone, timezone_updated_at, created_at FROM users WHERE id = ?');
+  const setTimeZone = db.prepare('UPDATE users SET timezone = ?, timezone_updated_at = ? WHERE id = ?');
   return (req, res, next) => {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token required' });
@@ -32,10 +37,13 @@ export function makeAuthenticate({ db, tokens, defaultTimeZone, onTimeZoneChange
     if (!row) return res.status(401).json({ error: 'User not found' });
 
     const zoneHeader = req.get('X-Time-Zone');
-    if (shouldStoreTimeZone(zoneHeader, row.timezone)) {
-      setTimeZone.run(zoneHeader, row.id);
-      row = { ...row, timezone: zoneHeader };
-      onTimeZoneChange(row.id);
+    const at = now();
+    if (shouldStoreTimeZone({ header: zoneHeader, stored: row.timezone, storedAt: row.timezone_updated_at, now: at })) {
+      const zone = canonicalTimeZone(zoneHeader);
+      setTimeZone.run(zone, at.toISOString(), row.id);
+      row = { ...row, timezone: zone };
+      const userId = row.id;
+      res.once('finish', () => onTimeZoneChange(userId));
     }
     req.user = pick(row, USER_FIELDS);
     req.timeZone = resolveTimeZone({ header: zoneHeader, stored: row.timezone, fallback: defaultTimeZone });

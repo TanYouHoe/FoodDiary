@@ -2,6 +2,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getMealPeriod, getDayOfWeek, getCalendarDate, isValidTimeZone, resolveTimeZone, shouldStoreTimeZone,
+  canonicalTimeZone, zoneReader, startOfDayInstant, shiftCalendarDate, TIME_ZONE_CHANGE_INTERVAL_MS,
 } from '../logic/meal-period.js';
 import { buildProfileRows } from '../logic/profile.js';
 import { openDatabase } from '../server/db.js';
@@ -70,14 +71,35 @@ describe('getDayOfWeek and getCalendarDate', () => {
   });
 });
 
-describe('isValidTimeZone', () => {
-  it('accepts IANA zones Intl knows', () => {
-    for (const tz of ['UTC', KL, 'America/New_York', 'Europe/London']) assert.equal(isValidTimeZone(tz), true, tz);
+describe('canonicalTimeZone and isValidTimeZone', () => {
+  it('names a zone the way Intl does', () => {
+    assert.equal(canonicalTimeZone('UTC'), 'UTC');
+    assert.equal(canonicalTimeZone('utc'), 'UTC');
+    assert.equal(canonicalTimeZone('asia/kuala_lumpur'), KL);
+    assert.equal(canonicalTimeZone('America/New_York'), 'America/New_York');
   });
-  it('refuses anything else', () => {
-    for (const tz of [undefined, null, '', ' ', 'Mars/Olympus', 42, {}, ['UTC']]) {
+  it('refuses offsets, non-strings and unknown zones', () => {
+    for (const tz of [undefined, null, '', ' ', 'Mars/Olympus', 42, {}, ['UTC'], '+08:00', '-0500', '+08']) {
+      assert.equal(canonicalTimeZone(tz), null, JSON.stringify(tz));
       assert.equal(isValidTimeZone(tz), false, JSON.stringify(tz));
     }
+  });
+  it('accepts IANA zones Intl knows', () => {
+    for (const tz of ['UTC', KL, 'America/New_York', 'Europe/London', 'utc']) assert.equal(isValidTimeZone(tz), true, tz);
+  });
+});
+
+describe('zoneReader', () => {
+  it('reads period, weekday and date in one zone', () => {
+    const kl = zoneReader('asia/kuala_lumpur');
+    assert.equal(kl.timeZone, KL);
+    assert.equal(kl.mealPeriod('2026-03-28T20:30:00Z'), 'breakfast');
+    assert.equal(kl.dayOfWeek('2026-03-28T20:30:00Z'), 0);
+    assert.equal(kl.calendarDate('2026-03-28T20:30:00Z'), '2026-03-29');
+  });
+  it('throws for an invalid zone', () => {
+    assert.throws(() => zoneReader('+08:00'), RangeError);
+    assert.throws(() => zoneReader(undefined), RangeError);
   });
 });
 
@@ -88,16 +110,61 @@ describe('resolveTimeZone', () => {
     assert.equal(resolveTimeZone({ header: undefined, stored: KL, fallback: 'Europe/London' }), KL);
     assert.equal(resolveTimeZone({ header: '', stored: null, fallback: 'Europe/London' }), 'Europe/London');
     assert.equal(resolveTimeZone({ stored: 'Bad/Stored', fallback: 'Europe/London' }), 'Europe/London');
+    assert.equal(resolveTimeZone({ header: '+08:00', stored: null, fallback: 'Europe/London' }), 'Europe/London');
+  });
+  it('returns the canonical name', () => {
+    assert.equal(resolveTimeZone({ header: 'utc', stored: KL, fallback: 'Europe/London' }), 'UTC');
+    assert.equal(resolveTimeZone({ header: undefined, stored: 'asia/kuala_lumpur', fallback: 'UTC' }), KL);
   });
 });
 
 describe('shouldStoreTimeZone', () => {
-  it('stores only a valid header that differs from the stored zone', () => {
-    assert.equal(shouldStoreTimeZone('UTC', null), true);
-    assert.equal(shouldStoreTimeZone('UTC', KL), true);
-    assert.equal(shouldStoreTimeZone('UTC', 'UTC'), false);
-    assert.equal(shouldStoreTimeZone(undefined, KL), false);
-    assert.equal(shouldStoreTimeZone('Nope/Zone', null), false);
+  const now = new Date('2026-03-29T12:00:00Z');
+  const hoursAgo = (h) => new Date(now.getTime() - h * 3600000).toISOString();
+
+  it('the change interval is six hours', () => assert.equal(TIME_ZONE_CHANGE_INTERVAL_MS, 6 * 3600000));
+
+  it('stores a valid header when no zone is stored', () => {
+    assert.equal(shouldStoreTimeZone({ header: 'UTC', stored: null, storedAt: null, now }), true);
+    assert.equal(shouldStoreTimeZone({ header: 'Nope/Zone', stored: null, storedAt: null, now }), false);
+    assert.equal(shouldStoreTimeZone({ header: '+08:00', stored: null, storedAt: null, now }), false);
+    assert.equal(shouldStoreTimeZone({ header: undefined, stored: null, storedAt: null, now }), false);
+  });
+
+  it('never stores the same zone, compared by canonical name', () => {
+    assert.equal(shouldStoreTimeZone({ header: 'UTC', stored: 'UTC', storedAt: hoursAgo(24), now }), false);
+    assert.equal(shouldStoreTimeZone({ header: 'utc', stored: 'UTC', storedAt: hoursAgo(24), now }), false);
+  });
+
+  it('changes a stored zone only when it is older than the interval', () => {
+    assert.equal(shouldStoreTimeZone({ header: 'UTC', stored: KL, storedAt: hoursAgo(1), now }), false);
+    assert.equal(shouldStoreTimeZone({ header: 'UTC', stored: KL, storedAt: hoursAgo(6), now }), false);
+    assert.equal(shouldStoreTimeZone({ header: 'UTC', stored: KL, storedAt: hoursAgo(6.01), now }), true);
+    assert.equal(shouldStoreTimeZone({ header: 'UTC', stored: KL, storedAt: null, now }), true);
+  });
+});
+
+describe('shiftCalendarDate', () => {
+  it('moves across months, leap days and years', () => {
+    assert.equal(shiftCalendarDate('2024-02-28', 1), '2024-02-29');
+    assert.equal(shiftCalendarDate('2026-03-01', -1), '2026-02-28');
+    assert.equal(shiftCalendarDate('2026-12-31', 1), '2027-01-01');
+    assert.equal(shiftCalendarDate('2026-03-29', 0), '2026-03-29');
+  });
+});
+
+describe('startOfDayInstant', () => {
+  it('is local midnight in the zone', () => {
+    assert.equal(startOfDayInstant('2026-03-29', KL), '2026-03-28T16:00:00.000Z');
+    assert.equal(startOfDayInstant('2026-03-29', 'UTC'), '2026-03-29T00:00:00.000Z');
+  });
+  it('keeps the earlier offset on a fall-back day', () => {
+    // New York falls back at 02:00 on 2026-11-01; midnight is still EDT.
+    assert.equal(startOfDayInstant('2026-11-01', 'America/New_York'), '2026-11-01T04:00:00.000Z');
+  });
+  it('is 23:00 the day before when the zone skips midnight', () => {
+    // Santiago jumps from 00:00 to 01:00 on 2025-09-07.
+    assert.equal(startOfDayInstant('2025-09-07', 'America/Santiago'), '2025-09-07T03:00:00.000Z');
   });
 });
 
