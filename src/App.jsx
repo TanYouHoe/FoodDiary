@@ -4,16 +4,11 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { INVITE_ROUTE } from '../logic/invites.js';
 import { useTheme } from './hooks/useTheme.js';
 import { useAppUpdate } from './hooks/useAppUpdate.js';
 import { useInstallPrompt } from './hooks/useInstallPrompt.js';
 import AppShell from './ui/AppShell.jsx';
 import UpdateBanner from './ui/UpdateBanner.jsx';
-import Login from './pages/Login';
-import Invite from './pages/Invite';
-import MfaStep from './pages/MfaStep';
-import Enroll from './pages/Enroll';
 import Dashboard from './pages/Dashboard';
 import Restaurants from './pages/Restaurants';
 import Meals from './pages/Meals';
@@ -51,9 +46,10 @@ function App() {
   return <><Screen installPrompt={installPrompt} />{banner}</>;
 }
 
-// The screen for the session state: loading, sign-in steps or the signed-in app.
+// Sign-in is behind us: the shared auth module's AuthGate renders this app only
+// once somebody is through. What is left is the app's own user row arriving.
 function Screen({ installPrompt }) {
-  const { user, loading, logout, mfaPending, needsEnrollment } = useAuth();
+  const { user, loading, logout } = useAuth();
   const { dark, toggleDark } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -69,17 +65,7 @@ function Screen({ installPrompt }) {
     if (!user) setShowSettings(false);
   }, [user]);
 
-  if (loading) return <div className="loading">Loading...</div>;
-  if (!user) {
-    if (mfaPending) return <MfaStep />;
-    return (
-      <Routes>
-        <Route path={INVITE_ROUTE} element={<Invite />} />
-        <Route path="*" element={<Login />} />
-      </Routes>
-    );
-  }
-  if (needsEnrollment) return <Enroll />;
+  if (loading || !user) return <div className="loading">Loading...</div>;
 
   return (
     <AppShell
@@ -103,7 +89,6 @@ function Screen({ installPrompt }) {
     >
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path={INVITE_ROUTE} element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/restaurants" element={<Restaurants />} />
         <Route path="/meals" element={<Meals />} />

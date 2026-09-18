@@ -8,13 +8,16 @@
     "build": "vite build",
     "server": "node --env-file-if-exists=.env server.js",
     "server:dev": "node --env-file-if-exists=.env --watch server.js",
-    "test": "node --test \"tests/**/*.test.js\""
+    "test": "node --test \"tests/**/*.test.js\"",
+    "sync:auth": "npm uninstall family-auth --no-audit --no-fund && npm install file:../FamilyAuth --no-audit --no-fund",
+    "auth": "node tools/auth.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^12.6.2",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "family-auth": "file:../FamilyAuth",
     "google-auth-library": "^10.6.2",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",

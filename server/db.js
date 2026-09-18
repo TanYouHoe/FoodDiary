@@ -179,6 +179,8 @@ const ADDED_COLUMNS = [
   ['users', 'totp_enabled_at', 'TEXT'],
   ['users', 'totp_last_step', 'INTEGER'],
   ['users', 'token_version', 'INTEGER NOT NULL DEFAULT 0'],
+  // The shared auth module owns the account; this ties the app's row to it.
+  ['users', 'auth_user_id', 'INTEGER'],
 ];
 
 function migrate(db) {
@@ -258,10 +260,8 @@ export function openDatabase(path, { defaultTimeZone } = {}) {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
-  createInvitesTable(db);
   migrate(db);
   convertZonelessVisitTimes(db, defaultTimeZone);
   seed(db);
-  promoteOwner(db);
   return db;
 }

@@ -1,10 +1,14 @@
 // Test helpers shared by the HTTP API tests.
 
 // url: the full request URL. Returns { status, body } with body parsed as JSON when it can be.
+//
+// `token` is the session cookie value that tests/helpers/auth.js signIn() returns.
+// The shared auth module carries the session in an HttpOnly cookie, not in an
+// Authorization header, so the token rides there.
 export async function callApi(url, method, { body, token, headers: extra = {} } = {}) {
   const headers = { ...extra };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (token) headers.cookie = `fd_session=${token}`;
   const res = await fetch(url, {
     method,
     headers,

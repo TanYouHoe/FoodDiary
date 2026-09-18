@@ -7,7 +7,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { inviteCode } from './helpers/invites.js';
+import { fakeGoogle, signInAs } from './helpers/auth.js';
+
+const google = fakeGoogle();
 import { openDatabase } from '../server/db.js';
 import { createApp } from '../server/app.js';
 
@@ -43,7 +45,7 @@ describe('API hardening', () => {
   const uploadPhotos = async (path, field, parts) => {
     const form = new FormData();
     for (const { bytes, type, name } of parts) form.append(field, new Blob([bytes], { type }), name);
-    const res = await fetch(`${publicApp.origin}/api${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form });
+    const res = await fetch(`${publicApp.origin}/api${path}`, { method: 'POST', headers: { cookie: `fd_session=${token}` }, body: form });
     return { status: res.status, body: await res.json() };
   };
 
@@ -68,19 +70,17 @@ describe('API hardening', () => {
 
     const db = openDatabase(':memory:', { defaultTimeZone: KL });
     const built = createApp({
-      db, uploadsDir, distDir, jwtSecret: 'test-secret', defaultTimeZone: KL, requireTotp: false,
+      db, uploadsDir, distDir, defaultTimeZone: KL, requireTotp: false, verifyGoogle: google,
       publicOrigin: PUBLIC, allowedOrigins: [PUBLIC], trustProxy: 'loopback', appBuild: BUILD,
     });
     publicApp = { ...(await listen(built.app)), db };
 
     const plainDb = openDatabase(':memory:', { defaultTimeZone: KL });
-    const plain = createApp({ db: plainDb, uploadsDir: plainUploadsDir, distDir, jwtSecret: 'test-secret', defaultTimeZone: KL, requireTotp: false });
+    const plain = createApp({ db: plainDb, uploadsDir: plainUploadsDir, distDir, defaultTimeZone: KL, requireTotp: false, verifyGoogle: google });
     plainApp = { ...(await listen(plain.app)), db: plainDb };
 
-    const reg = await postJson('/auth/register', { name: 'Hana', email: 'hana@harden.test', password: 'pw', invite_code: inviteCode(db, { role: 'owner' }) });
-    assert.equal(reg.status, 201);
-    token = reg.body.token;
-    const auth = { Authorization: `Bearer ${token}` };
+    token = await signInAs(db, publicApp.origin, { email: 'hana@harden.test', name: 'Hana', roles: ['admin'], google });
+    const auth = { cookie: `fd_session=${token}` };
     restaurantId = (await postJson('/restaurants', { name: 'Kopi', cuisine_type: 'Malaysian', price_range: 1 }, auth)).body.id;
     mealId = (await postJson('/meals', { restaurant_id: restaurantId, rating: 4, visited_at: '2026-09-16T12:00:00+08:00' }, auth)).body.id;
     assert.ok(restaurantId && mealId);
@@ -291,7 +291,7 @@ describe('API hardening', () => {
 
     it('one spoofed file among meal photos refuses them all and deletes every file', async () => {
       const before = files().length;
-      const photosOf = async () => (await get('/api/meals', { Authorization: `Bearer ${token}` }).then(r => r.json())).find(m => m.id === mealId).photo_urls;
+      const photosOf = async () => (await get('/api/meals', { cookie: `fd_session=${token}` }).then(r => r.json())).find(m => m.id === mealId).photo_urls;
       const stored = await photosOf();
       const r = await uploadPhotos(`/meals/${mealId}/photos`, 'photos', [
         { bytes: PNG, type: 'image/png', name: 'good.png' },
@@ -348,26 +348,28 @@ describe('API hardening', () => {
   });
 
   describe('trust proxy', () => {
-    const ipKeys = (db) => db.prepare("SELECT key FROM auth_failures WHERE key LIKE 'ip:%'").all().map(row => row.key);
-    const check = (at, forwardedFor) => postJson('/invites/check', { code: 'wrong' }, { 'X-Forwarded-For': forwardedFor }, at);
+    // The shared auth module keys its lockout by the client address it is given.
+    // A sign-in by an address nobody added is refused and leaves one such row.
+    const ipKeys = (db) => db.prepare("SELECT key FROM auth_signin_failures WHERE key LIKE 'ip:%'").all().map(row => row.key);
+    const check = (at, forwardedFor) => postJson('/auth/google', { credential: google.credential('stranger@harden.test') }, { 'X-Forwarded-For': forwardedFor }, at);
 
     it('behind a loopback proxy each forwarded client IP gets its own lockout key', async () => {
-      assert.equal((await check(publicApp, '203.0.113.17')).status, 200);
-      assert.equal((await check(publicApp, '203.0.113.18')).status, 200);
+      assert.equal((await check(publicApp, '203.0.113.17')).status, 403);
+      assert.equal((await check(publicApp, '203.0.113.18')).status, 403);
       const keys = ipKeys(publicApp.db);
       assert.ok(keys.includes('ip:203.0.113.17'), keys.join());
       assert.ok(keys.includes('ip:203.0.113.18'), keys.join());
     });
 
     it('a client-supplied X-Forwarded-For entry is not trusted: the address the proxy saw is the key', async () => {
-      assert.equal((await check(publicApp, '198.51.100.1, 203.0.113.7')).status, 200);
+      assert.equal((await check(publicApp, '198.51.100.1, 203.0.113.7')).status, 403);
       const keys = ipKeys(publicApp.db);
       assert.ok(keys.includes('ip:203.0.113.7'), keys.join());
       assert.equal(keys.includes('ip:198.51.100.1'), false, keys.join());
     });
 
     it('with trust proxy off, X-Forwarded-For is ignored', async () => {
-      assert.equal((await check(plainApp, '203.0.113.9')).status, 200);
+      assert.equal((await check(plainApp, '203.0.113.9')).status, 403);
       const keys = ipKeys(plainApp.db);
       assert.equal(keys.some(k => k.includes('203.0.113.9')), false, keys.join());
       assert.equal(keys.length, 1);

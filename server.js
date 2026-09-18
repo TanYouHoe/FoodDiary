@@ -19,6 +19,7 @@
 //                       unset: required when NODE_ENV=production
 
 import { mkdirSync } from 'node:fs';
+import { loadAuthConfig } from 'family-auth/server';
 import { checkServerConfig, shouldRequireTotp, parseTrustProxy, listenHost, listenPort, DEV_JWT_SECRET } from './logic/config.js';
 import { allowedOrigins } from './logic/http-policy.js';
 import { openDatabase } from './server/db.js';
@@ -56,7 +57,7 @@ const { app } = createApp({
   db,
   uploadsDir,
   distDir: DIST_DIR,
-  jwtSecret: JWT_SECRET,
+  authConfig: loadAuthConfig(env),
   googleClientId: env.GOOGLE_CLIENT_ID,
   defaultTimeZone: TIME_ZONE,
   publicOrigin: PUBLIC_ORIGIN,

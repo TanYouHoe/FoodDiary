@@ -9,7 +9,10 @@ import { mkdtempSync, rmSync, readdirSync, existsSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { callApi } from './helpers/http.js';
-import { inviteCode } from './helpers/invites.js';
+import { fakeGoogle, addAccount, signIn } from './helpers/auth.js';
+
+const google = fakeGoogle();
+const ownGoogle = fakeGoogle();
 
 let base = process.env.FOOD_DIARY_TEST_BASE ? `${process.env.FOOD_DIARY_TEST_BASE}/api` : null;
 let server = null;
@@ -28,18 +31,16 @@ const call = (method, path, { at = base, ...options } = {}) => callApi(`${at}${p
 async function upload(path, field, count, token, at = base) {
   const form = new FormData();
   for (let i = 0; i < count; i++) form.append(field, new Blob([PNG], { type: 'image/png' }), `p${i}.png`);
-  const res = await fetch(`${at}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form });
+  const res = await fetch(`${at}${path}`, { method: 'POST', headers: { cookie: `fd_session=${token}` }, body: form });
   return { status: res.status, body: await res.json() };
 }
 
-// An account invite code for the shared server. In-process it comes straight
-// from the invite store. Against a running server the owner invite comes from
-// FOOD_DIARY_TEST_OWNER_INVITE (tools/create-invite.js --owner) and member
-// invites from POST /invites as that owner.
-async function invite(role, ownerToken) {
-  if (sharedDb) return inviteCode(sharedDb, { role });
-  if (role === 'owner') return process.env.FOOD_DIARY_TEST_OWNER_INVITE;
-  return (await call('POST', '/invites', { token: ownerToken })).body.code;
+// Add an account and sign in, the way the app works now: an admin adds the
+// address, and the person signs in with the Google account for it. `token` is
+// the session cookie value; callApi sends it as the cookie.
+async function joinAs(email, { name, roles = ['member'] } = {}) {
+  if (sharedDb) addAccount(sharedDb, { email, name, roles });
+  return signIn(base.replace(/\/api$/, ''), email, { google });
 }
 
 before(async () => {
@@ -49,7 +50,7 @@ before(async () => {
   const { createApp } = await import('../server/app.js');
   const db = openDatabase(':memory:', { defaultTimeZone: 'Asia/Kuala_Lumpur' });
   sharedDb = db;
-  const { app } = createApp({ db, uploadsDir: tmp, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur', requireTotp: false });
+  const { app } = createApp({ db, uploadsDir: tmp, defaultTimeZone: 'Asia/Kuala_Lumpur', requireTotp: false, verifyGoogle: google });
   await new Promise(resolve => { server = app.listen(0, resolve); });
   base = `http://127.0.0.1:${server.address().port}/api`;
 });
@@ -72,39 +73,26 @@ describe('API', () => {
     assert.deepEqual(r.body, { status: 'ok' });
   });
 
-  it('register creates a user and hides the password hash', async () => {
-    const r = await call('POST', '/auth/register', { body: { name: ' Alice ', email: 'alice@test.com', password: 'pw123', invite_code: await invite('owner') } });
-    assert.equal(r.status, 201);
-    assert.ok(r.body.token);
-    assert.equal(r.body.user.name, 'Alice');
-    assert.equal(r.body.user.email, 'alice@test.com');
-    assert.ok(!('password_hash' in r.body.user));
-    token = r.body.token;
-  });
-
-  it('register rejects missing fields and duplicate email', async () => {
-    assert.equal((await call('POST', '/auth/register', { body: { email: 'x@test.com' } })).status, 400);
-    const invite_code = await invite('member', token);
-    assert.equal((await call('POST', '/auth/register', { body: { name: 'A', email: 'alice@test.com', password: 'x', invite_code } })).status, 409);
-  });
-
-  it('login accepts valid credentials and rejects bad ones', async () => {
-    const ok = await call('POST', '/auth/login', { body: { email: 'alice@test.com', password: 'pw123' } });
-    assert.equal(ok.status, 200);
-    assert.ok(ok.body.token);
-    assert.ok(!('password_hash' in ok.body.user));
-    assert.equal((await call('POST', '/auth/login', { body: { email: 'alice@test.com', password: 'nope' } })).status, 401);
-    assert.equal((await call('POST', '/auth/login', { body: { email: 'ghost@test.com', password: 'x' } })).status, 401);
-    assert.equal((await call('POST', '/auth/login', { body: {} })).status, 400);
-  });
-
-  it('me needs a valid token', async () => {
-    const r = await call('GET', '/auth/me', { token });
+  it('an address an admin added can sign in, and gets an app user row', async () => {
+    token = await joinAs('alice@test.com', { name: 'Alice', roles: ['admin'] });
+    const r = await call('GET', '/me', { token });
     assert.equal(r.status, 200);
     assert.equal(r.body.email, 'alice@test.com');
+    assert.equal(r.body.name, 'Alice');
+    assert.equal(r.body.role, 'owner', 'an account that can manage users is the app owner');
     assert.ok(!('password_hash' in r.body));
-    assert.equal((await call('GET', '/auth/me')).status, 401);
-    assert.equal((await call('GET', '/auth/me', { token: 'garbage' })).status, 401);
+  });
+
+  it('an address nobody added is refused, and no account is made', async () => {
+    const r = await call('POST', '/auth/google', { body: { credential: google.credential('stranger@test.com') } });
+    assert.equal(r.status, 403);
+    assert.equal(sharedDb.prepare('SELECT COUNT(*) c FROM users WHERE email = ?').get('stranger@test.com').c, 0);
+  });
+
+  it('the app answers nothing without a session', async () => {
+    assert.equal((await call('GET', '/me')).status, 401);
+    assert.equal((await call('GET', '/me', { token: 'garbage' })).status, 401);
+    assert.equal((await call('GET', '/meals')).status, 401);
   });
 
   it('google login without a credential is 400', async () => {
@@ -259,7 +247,8 @@ describe('API', () => {
   });
 
   it('groups: create, join, members, duplicate join', async () => {
-    const reg = await call('POST', '/auth/register', { body: { name: 'Bob', email: 'bob@test.com', password: 'pw', invite_code: await invite('member', token) } });
+    const bobToken = await joinAs('bob@test.com', { name: 'Bob' });
+    const reg = { body: { token: bobToken, user: (await call('GET', '/me', { token: bobToken })).body } };
     token2 = reg.body.token;
     assert.equal((await call('POST', '/groups', { token, body: { name: ' ' } })).status, 400);
     const g = await call('POST', '/groups', { token, body: { name: 'Lunch Crew' } });
@@ -374,7 +363,7 @@ describe('API ownership and access', () => {
     const before = uploadedFiles();
     const pending = fetch(`${at}${path}`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${who.token}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      headers: { cookie: `fd_session=${who.token}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
       body,
       duplex: 'half',
     });
@@ -386,10 +375,13 @@ describe('API ownership and access', () => {
     }
     return pending;
   };
+  // An admin adds the address, then the person signs in with the Google account
+  // for it. `roles: ['admin']` is what makes somebody the app's owner.
   const register = async (name, role = 'member') => {
-    const invite_code = inviteCode(db, { role });
-    const r = await call('POST', '/auth/register', { at, body: { name, email: `${name}@own.test`, password: 'pw', invite_code } });
-    return { ...r.body.user, token: r.body.token };
+    const email = `${name}@own.test`;
+    addAccount(db, { email, name, roles: role === 'owner' ? ['admin'] : ['member'] });
+    const token = await signIn(at.replace(/\/api$/, ''), email, { google: ownGoogle });
+    return { ...(await call('GET', '/me', { at, token })).body, token };
   };
 
   before(async () => {
@@ -398,7 +390,7 @@ describe('API ownership and access', () => {
     const { createApp } = await import('../server/app.js');
     db = openDatabase(':memory:', { defaultTimeZone: 'Asia/Kuala_Lumpur' });
     const { app } = createApp({
-      db, uploadsDir: dir, jwtSecret: 'test-secret', defaultTimeZone: 'Asia/Kuala_Lumpur', verifyGoogle: async () => google.payload,
+      db, uploadsDir: dir, defaultTimeZone: 'Asia/Kuala_Lumpur', verifyGoogle: ownGoogle,
       requireTotp: false,
     });
     await new Promise(resolve => { app2 = app.listen(0, resolve); });
@@ -414,11 +406,10 @@ describe('API ownership and access', () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('users carry a role; the owner invite made the owner', async () => {
-    assert.equal((await req('GET', '/auth/me', olive)).body.role, 'owner');
-    assert.equal((await req('GET', '/auth/me', amy)).body.role, 'member');
-    const login = await call('POST', '/auth/login', { at, body: { email: 'ben@own.test', password: 'pw' } });
-    assert.equal(login.body.user.role, 'member');
+  it('an account that can manage users is the app owner; the rest are members', async () => {
+    assert.equal((await req('GET', '/me', olive)).body.role, 'owner');
+    assert.equal((await req('GET', '/me', amy)).body.role, 'member');
+    assert.equal((await req('GET', '/me', ben)).body.role, 'member');
   });
 
   it('restaurants: only the adder or the owner may change them', async () => {
@@ -665,13 +656,13 @@ describe('API ownership and access', () => {
     assert.equal((await req('DELETE', `/restaurants/${solo.id}`, amy)).status, 204);
   });
 
-  it('google sign-in of an existing user returns the adopted avatar', async () => {
-    google.payload = { email: 'amy@own.test', name: 'Amy', picture: 'https://example.test/amy.png', email_verified: true };
-    const r = await call('POST', '/auth/google', { at, body: { credential: 'fake' } });
-    assert.equal(r.status, 200);
-    assert.equal(r.body.user.avatar_url, 'https://example.test/amy.png');
-    assert.equal(r.body.user.role, 'member');
-    assert.equal((await req('GET', '/auth/me', amy)).body.avatar_url, 'https://example.test/amy.png');
+  it('a picture from Google reaches the app user row at the next sign-in', async () => {
+    const token = await signIn(at.replace(/\/api$/, ''), 'amy@own.test', {
+      google: { credential: () => JSON.stringify({ email: 'amy@own.test', name: 'Amy', picture: 'https://example.test/amy.png' }) },
+    });
+    const me = (await call('GET', '/me', { at, token })).body;
+    assert.equal(me.avatar_url, 'https://example.test/amy.png');
+    assert.equal(me.role, 'member');
   });
 
   it('the allowed user can still delete; the owner may delete a shared restaurant', async () => {

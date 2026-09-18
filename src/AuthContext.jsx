@@ -1,95 +1,44 @@
-// UI connector: the signed-in user, shared through React context. Also holds
-// the pending second-factor step (its mfa token lives in memory only, never in
-// browser storage), whether the API has asked for authenticator setup, and the
-// one place a new session token is adopted.
+// UI connector: the signed-in person, as Food Diary knows them.
+//
+// Sign-in itself belongs to the shared auth module: its AuthGate shows the
+// Google button, the authenticator step and the enrollment screen, and only
+// renders this app once somebody is through. What is left here is the app's own
+// user row — the name, the avatar and the stored time zone that meals and groups
+// hang off — which the server returns from GET /api/me.
 
-import { createContext, useContext, useState, useEffect } from 'react';
-import { api, onEnrollRequired } from './api';
-import { getToken, setToken, clearToken } from './token-store.js';
-import { clearPhotoCache } from './pwa-cache.js';
-import { needsEnrollment } from './ui/two-factor.js';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { api } from './api.js';
 
 const AuthContext = createContext(null);
 
-export function AuthProvider({ children }) {
+export function useAuth() {
+  const value = useContext(AuthContext);
+  if (!value) throw new Error('useAuth must be used inside AuthProvider');
+  return value;
+}
+
+// `session` is what the module's AuthGate hands its child.
+export function AuthProvider({ session, children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [mfaToken, setMfaToken] = useState(null);
-  const [enrollRequired, setEnrollRequired] = useState(false);
-  const [enrollHeld, setEnrollHeld] = useState(false);
 
-  useEffect(() => {
-    if (getToken()) {
-      // A refused or expired session ends here, like a sign-out.
-      api.getMe().then(setUser).catch(() => { clearToken(); clearPhotoCache(); }).finally(() => setLoading(false));
-    } else {
-      setLoading(false);
-    }
-  }, []);
+  const refresh = useCallback(() => api.getMe()
+    .then((row) => { setUser(row); return row; })
+    .catch(() => setUser(null))
+    .finally(() => setLoading(false)), []);
 
-  useEffect(() => onEnrollRequired(() => setEnrollRequired(true)), []);
+  useEffect(() => { refresh(); }, [refresh]);
 
-  // The one place a new session is adopted: stores the token and updates the
-  // user. session: { token, user }. Used by sign-in and by factor changes.
-  const adoptSession = ({ token, user: next }) => {
-    setToken(token);
-    setUser(next);
-  };
-
-  const signIn = (session) => {
-    adoptSession(session);
-    setMfaToken(null);
-    setEnrollRequired(false);
-  };
-
-  // held: keep the setup screen up while the new backup codes are shown, even
-  // though the adopted user already has a factor.
-  const holdEnrollment = (held) => setEnrollHeld(held);
-
-  // result: { token, user } or { mfa_required, mfa_token }.
-  const afterFirstFactor = (result) => {
-    if (result.mfa_required) {
-      clearToken();
-      setMfaToken(result.mfa_token);
-    } else {
-      signIn(result);
-    }
-  };
-
-  const login = async (email, password) => afterFirstFactor(await api.login({ email, password }));
-  // inviteCode: the account invite a new account needs.
-  const register = async (name, email, password, inviteCode) =>
-    afterFirstFactor(await api.register({ name, email, password, invite_code: inviteCode }));
-  const googleLogin = async (credential, inviteCode) => afterFirstFactor(await api.googleLogin(credential, inviteCode));
-
-  // factor: { code } or { backup_code }.
-  const verifyMfa = async (factor) => signIn(await api.verifyMfa({ mfa_token: mfaToken, ...factor }));
-  const cancelMfa = () => setMfaToken(null);
-
-  const logout = () => {
-    clearToken();
-    clearPhotoCache(); // fire and forget
+  const logout = useCallback(() => {
     setUser(null);
-    setMfaToken(null);
-    setEnrollRequired(false);
-    setEnrollHeld(false);
-  };
+    return session.signOut();
+  }, [session]);
 
   return (
-    <AuthContext.Provider value={{
-      user,
-      loading,
-      mfaPending: Boolean(mfaToken),
-      needsEnrollment: needsEnrollment({ user, enrollRequired, held: enrollHeld }),
-      login, register, googleLogin, verifyMfa, cancelMfa, signIn, adoptSession, holdEnrollment, logout,
-    }}>
+    <AuthContext.Provider value={{ user, loading, refresh, logout, session, account: session.user }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
-}
+export default AuthProvider;

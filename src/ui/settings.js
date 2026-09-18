@@ -1,18 +1,19 @@
-// UI: the tabs of the settings popup. Whether the user may see the invites tab
-// is logic/invites.js; the caller passes the answer.
+// UI: the tabs of the settings popup.
+//
+// Signing in, the authenticator, the people and the roles are not here any more:
+// the shared auth module serves its own console at /accounts, and the Account
+// tab points at it.
 
-export const SECURITY_TAB = { id: 'security', label: 'Security' };
+export const ACCOUNT_TAB = { id: 'account', label: 'Account' };
 
 export const SETTINGS_TABS = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'meal-types', label: 'Meal Types' },
   { id: 'dish-types', label: 'Dish Types' },
   { id: 'patterns', label: 'Eating Patterns' },
-  SECURITY_TAB,
+  ACCOUNT_TAB,
 ];
 
-export const INVITES_TAB = { id: 'invites', label: 'Invites' };
-
-export function settingsTabs({ showInvites }) {
-  return showInvites ? [...SETTINGS_TABS, INVITES_TAB] : SETTINGS_TABS;
+export function settingsTabs() {
+  return SETTINGS_TABS;
 }

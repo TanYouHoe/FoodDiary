@@ -9,21 +9,13 @@ import { isAllowedOrigin, securityHeaders, uploadSecurityHeaders, cacheControlFo
 import { isServablePhotoName } from '../logic/meals.js';
 import { normalizeBuildId, BUILD_HEADER } from '../logic/app-build.js';
 import { notFound } from './guards.js';
-import { makeTokens, makeAuthenticate, verifyGoogleCredential } from './auth.js';
+import { createAuth } from 'family-auth/server';
+import { makeAuthenticate } from './auth-adapter.js';
+import { PERMISSIONS, ROLES } from '../logic/permissions.js';
 import { makeUpload, isUploadError } from './uploads.js';
 import { makeGroupAccess } from './guards.js';
 import { rebuildProfile } from './profile-store.js';
 import { resolveTimeZone, isValidTimeZone } from '../logic/meal-period.js';
-import { makeInvites } from './invites.js';
-import { makeLockout } from './lockout-store.js';
-import { makeTwoFactor } from './two-factor.js';
-import { backupCodePepper } from './totp-crypto.js';
-import { makeSessions } from './sessions.js';
-import { makeFactorGuard } from './factor-guard.js';
-import { authRoutes } from './routes/auth.js';
-import { totpRoutes } from './routes/totp.js';
-import { userRoutes } from './routes/users.js';
-import { inviteRoutes } from './routes/invites.js';
 import { restaurantRoutes } from './routes/restaurants.js';
 import { mealTypeRoutes, dishTypeRoutes } from './routes/catalog.js';
 import { mealRoutes, dishRoutes } from './routes/meals.js';
@@ -35,9 +27,12 @@ export function createApp({
   db,
   uploadsDir,
   distDir = null,
-  jwtSecret,
   googleClientId,
-  verifyGoogle = verifyGoogleCredential,
+  // Injected in tests so a whole sign-in runs with no network call.
+  verifyGoogle,
+  // The rest of the shared module's settings, from server/config via
+  // loadAuthConfig: ALLOW_ADMIN_PASSWORD, TRUST_DEVICE_DAYS, PUBLIC_ORIGIN.
+  authConfig = {},
   now = () => new Date(),
   rng = Math.random,
   log = () => {},
@@ -50,14 +45,25 @@ export function createApp({
 }) {
   if (!isValidTimeZone(defaultTimeZone)) throw new Error(`createApp: defaultTimeZone must be an IANA time zone, got ${defaultTimeZone}`);
   if (typeof requireTotp !== 'boolean') throw new Error(`createApp: requireTotp must be a boolean, got ${requireTotp}`);
-  const tokens = makeTokens(jwtSecret);
   const upload = makeUpload(uploadsDir);
   const groupAllowed = makeGroupAccess(db);
-  const invites = makeInvites(db);
-  const lockout = makeLockout(db);
-  const twoFactor = makeTwoFactor(db, { backupCodePepper: backupCodePepper(jwtSecret) });
-  const sessions = makeSessions({ db, tokens, requireTotp, now });
-  const guard = makeFactorGuard({ lockout, twoFactor, now });
+
+  // Sign-in, accounts and roles come from the shared module. It adds its own
+  // auth_* tables to this database and owns every credential; Food Diary keeps
+  // its `users` row for the data that hangs off it (server/auth-adapter.js).
+  const auth = createAuth({
+    ...authConfig,
+    db,
+    appName: 'Food Diary',
+    permissions: PERMISSIONS,
+    roles: ROLES,
+    googleClientId,
+    verifyGoogleCredential: verifyGoogle,
+    totpMode: requireTotp ? 'required' : 'optional',
+    cookiePrefix: 'fd',
+    // The module takes epoch milliseconds; this app passes Date objects around.
+    now: () => now().getTime(),
+  });
 
   // The profile is derived data. A failed rebuild must not fail the meal change.
   // It is read in the user's stored zone, else the default zone.
@@ -68,7 +74,7 @@ export function createApp({
       rebuildProfile(db, userId, timeZone);
     } catch (err) { log(`[profile] rebuild failed for user ${userId}: ${err.message}`); }
   };
-  const authenticate = makeAuthenticate({ db, tokens, defaultTimeZone, now, requireTotp, onTimeZoneChange: refreshProfile });
+  const authenticate = makeAuthenticate({ db, defaultTimeZone, now, onTimeZoneChange: refreshProfile });
 
   const app = express();
   // req.ip is the client named by a trusted proxy, so the lockout keys by the real IP.
@@ -91,6 +97,9 @@ export function createApp({
   });
 
   app.use(express.json({ limit: '1mb' }));
+
+  // Says who is asking on every request, and refuses nothing by itself.
+  app.use(auth.gate);
 
   // /uploads: photo names only, under a sandbox policy, and never the app
   // shell. A missing or denied file answers JSON 404 or 403. The static
@@ -119,11 +128,15 @@ export function createApp({
 
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-  // The routes an enroll-scope session may reach are listed in logic/two-factor.js ENROLL_SCOPE_ROUTES.
-  app.use('/api/auth/totp', totpRoutes({ authenticate, twoFactor, guard, sessions, requireTotp, now }));
-  app.use('/api/auth', authRoutes({ db, authenticate, verifyGoogle, googleClientId, invites, tokens, twoFactor, lockout, sessions, now }));
-  app.use('/api/invites', inviteRoutes({ db, invites, authenticate, lockout, now, publicOrigin }));
-  app.use('/api/users', authenticate, userRoutes({ db, twoFactor, guard }));
+  // Sign-in, accounts and roles: the shared module's own router. The old
+  // /api/users list and its two-factor reset went with it — both are in the
+  // account console now.
+  app.use('/api/auth', auth.router);
+
+  // The signed-in person as THIS app knows them: the row that meals, groups and
+  // the stored time zone hang off. The module's /api/auth/context answers who
+  // they are to the auth system; this answers who they are to Food Diary.
+  app.get('/api/me', authenticate, (req, res) => res.json(req.user));
   app.use('/api/restaurants', authenticate, restaurantRoutes({ db, upload, uploadsDir, refreshProfile }));
   app.use('/api/meal-types', authenticate, mealTypeRoutes({ db }));
   app.use('/api/dish-types', authenticate, dishTypeRoutes({ db }));
@@ -133,6 +146,10 @@ export function createApp({
   app.use('/api/planned', authenticate, plannedRoutes({ db, groupAllowed }));
   app.use('/api/suggest', authenticate, suggestRoutes({ db, now, rng, groupAllowed }));
   app.use('/api/profile', authenticate, profileRoutes({ db }));
+
+  // The account console, served whole by the shared module. Food Diary writes no
+  // part of it: /accounts is sign-in, people, roles and the sign-in history.
+  app.use('/accounts', auth.adminUi({ appName: 'Food Diary', homeUrl: '/' }));
 
   // No HTML for a missing file: an unknown API path (any method) is JSON 404,
   // and a missing build asset is a bare 404, not the app shell.

@@ -1,26 +1,10 @@
 // Connector: the browser's only HTTP client. Knows every URL and header, and
 // maps response bodies into the shapes the screens use.
 
-import { getToken } from './token-store.js';
 import { APP_BUILD } from './config.js';
-import { MFA_ENROLL_REQUIRED } from '../logic/two-factor.js';
 import { isNewBuild, BUILD_HEADER } from '../logic/app-build.js';
 
 const API = '/api';
-
-// Listeners told when the server answers that the user must set up an authenticator.
-const enrollListeners = new Set();
-
-// Returns a function that removes the listener.
-export function onEnrollRequired(listener) {
-  enrollListeners.add(listener);
-  return () => enrollListeners.delete(listener);
-}
-
-// body: a parsed response body. Tells the listeners when it asks for setup.
-function notifyIfEnrollRequired(body) {
-  if (body?.code === MFA_ENROLL_REQUIRED.code) enrollListeners.forEach(listener => listener());
-}
 
 // Listeners told when the server answers from a different build than this page.
 const buildListeners = new Set();
@@ -43,15 +27,15 @@ function notifyIfNewBuild(res) {
 // Every request names the browser's IANA time zone, so the server reads meal
 // periods and weekdays where the user is.
 function commonHeaders() {
-  const token = getToken();
-  return {
-    'X-Time-Zone': Intl.DateTimeFormat().resolvedOptions().timeZone,
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+  return { 'X-Time-Zone': Intl.DateTimeFormat().resolvedOptions().timeZone };
 }
 
+// The session is an HttpOnly cookie the shared auth module sets, so every
+// request carries it by asking for same-origin credentials. There is no token
+// for this app to hold, and none for a script to steal.
 async function request(url, options = {}) {
   const res = await fetch(url, {
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...commonHeaders() },
     ...options,
   });
@@ -59,7 +43,6 @@ async function request(url, options = {}) {
   if (res.status === 204) return null;
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: 'Request failed' }));
-    notifyIfEnrollRequired(body);
     const err = new Error(body.error);
     err.status = res.status;
     err.code = body.code;
@@ -80,13 +63,12 @@ function query(params = {}) {
 function uploadForm(url, form) {
   return fetch(url, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: commonHeaders(),
     body: form,
   }).then(async (r) => {
     notifyIfNewBuild(r);
-    const body = await r.json();
-    notifyIfEnrollRequired(body);
-    return body;
+    return r.json();
   });
 }
 
@@ -97,45 +79,11 @@ function parsePhotoUrls(value) {
 
 const toMeal = ({ photo_urls, ...meal }) => ({ ...meal, photos: parsePhotoUrls(photo_urls) });
 
-// { code } or { backupCode } (or nothing) as the request body the server reads.
-function factorBody({ code, backupCode } = {}) {
-  if (backupCode) return { backup_code: backupCode };
-  return code ? { code } : {};
-}
-
 export const api = {
-  // Auth
-  register: (data) => send('POST', `${API}/auth/register`, data),
-  login: (data) => send('POST', `${API}/auth/login`, data),
-  googleLogin: (credential, invite_code) => send('POST', `${API}/auth/google`, { credential, invite_code }),
-  getMe: () => request(`${API}/auth/me`),
-  // data: { mfa_token, code } or { mfa_token, backup_code }.
-  verifyMfa: (data) => send('POST', `${API}/auth/mfa`, data),
-  logoutAll: () => request(`${API}/auth/logout-all`, { method: 'POST' }),
-
-  // Two-factor. proof: { code } or { backupCode }, needed only when replacing an enabled factor.
-  setupTotp: async (proof) => {
-    const body = await send('POST', `${API}/auth/totp/setup`, factorBody(proof));
-    return { secret: body.secret, otpauthUrl: body.otpauth_url };
-  },
-  cancelTotpSetup: () => request(`${API}/auth/totp/cancel`, { method: 'POST' }),
-  enableTotp: async (code) => {
-    const body = await send('POST', `${API}/auth/totp/enable`, { code });
-    return { backupCodes: body.backup_codes, token: body.token, user: body.user };
-  },
-  // proof: { code } or { backupCode }.
-  regenerateBackupCodes: async (proof) => (await send('POST', `${API}/auth/totp/backup-codes`, factorBody(proof))).backup_codes,
-
-  // Users (owner)
-  getUsers: () => request(`${API}/users`),
-  // proof: the owner's own { code } or { backupCode }.
-  resetUserTotp: (id, proof) => send('POST', `${API}/users/${id}/totp/reset`, factorBody(proof)),
-
-  // Account invites (sign-up links; not group invite codes)
-  checkAccountInvite: (code) => send('POST', `${API}/invites/check`, { code }),
-  getAccountInvites: () => request(`${API}/invites`),
-  createAccountInvite: () => send('POST', `${API}/invites`, {}),
-  revokeAccountInvite: (id) => request(`${API}/invites/${id}`, { method: 'DELETE' }),
+  // The signed-in person as this app knows them: the row meals and groups hang
+  // off. Sign-in, accounts and roles are the shared module's, at /api/auth, and
+  // are reached through family-auth/react — never from here.
+  getMe: () => request(`${API}/me`),
 
   // Meal Types
   getMealTypes: (params) => request(`${API}/meal-types${query(params)}`),
