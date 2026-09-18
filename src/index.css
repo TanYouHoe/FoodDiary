@@ -1732,6 +1732,7 @@ hr {
 
 .restaurants-page {
   max-width: 800px;
+  margin: 0 auto;
 }
 
 .page-header {
@@ -1845,6 +1846,7 @@ hr {
 
 .add-meal-page {
   max-width: 680px;
+  margin: 0 auto;
 }
 
 .add-meal-page h2 {
@@ -2159,6 +2161,7 @@ hr {
 
 .map-page {
   max-width: 960px;
+  margin: 0 auto;
 }
 
 .map-page h2 {
@@ -2215,6 +2218,7 @@ hr {
 
 .groups-page {
   max-width: 800px;
+  margin: 0 auto;
 }
 
 .groups-page h2 {
@@ -2390,6 +2394,7 @@ hr {
 
 .planned-page {
   max-width: 800px;
+  margin: 0 auto;
 }
 
 .group-toggle {
@@ -2727,6 +2732,7 @@ hr {
 
 .dishes-page {
   max-width: 800px;
+  margin: 0 auto;
 }
 
 .dishes-filters {
@@ -2823,6 +2829,7 @@ hr {
 
 .meal-types-page {
   max-width: 900px;
+  margin: 0 auto;
 }
 
 .mt-card-grid {
